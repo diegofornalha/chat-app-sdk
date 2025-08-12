@@ -1,1 +1,17 @@
-{}
+{
+  "researcher": {
+    "total": 1,
+    "successful": 1,
+    "failed": 0,
+    "totalDuration": 0.0003749999999911324,
+    "actions": [
+      {
+        "id": "researcher-1755016071272",
+        "action": "spawn",
+        "duration": 0.0003749999999911324,
+        "success": true,
+        "timestamp": 1755016071272
+      }
+    ]
+  }
+}
