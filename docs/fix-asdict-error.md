@@ -8,37 +8,31 @@ O Mesop usa internamente `asdict()` para serializar o estado da aplicação. Qua
 
 ## Solução Implementada
 
-### 1. Separação de Estado
-Criamos duas classes separadas:
-- `StateData`: Uma dataclass pura que contém todos os dados serializáveis
-- `State`: A classe decorada com `@me.stateclass` que encapsula `StateData`
+### Abordagem Final: Estado Direto com @me.stateclass
+Após testar diferentes abordagens, a solução foi usar `@me.stateclass` diretamente:
 
 ```python
-@dataclass
-class StateData:
-    """Dados serializáveis do estado"""
-    current_session: ChatSession = field(default_factory=ChatSession)
-    sessions: Dict[str, ChatSession] = field(default_factory=dict)
-    # ... outros campos ...
-
-@me.stateclass 
+@me.stateclass
 class State:
     """Estado da aplicação Mesop"""
-    data: StateData = field(default_factory=StateData)
+    current_session: ChatSession = field(default_factory=ChatSession)
+    sessions: Dict[str, ChatSession] = field(default_factory=dict)
+    input_text: str = ""
+    is_loading: bool = False
+    error_message: str = ""
+    # ... outros campos ...
 ```
 
-### 2. Atualização de Referências
-Todas as funções foram atualizadas para:
-- Acessar `state.data` em vez de `state` diretamente
-- Passar `StateData` como parâmetro em vez de `State`
-- Verificar se `state.data` existe antes de usar
+### Por que a separação não funcionou
+A tentativa inicial de separar em `StateData` e `State` causou um erro `AttributeError` porque:
+1. O decorador `@dataclass` conflitava com `@me.stateclass`
+2. O Mesop espera trabalhar diretamente com a classe decorada
+3. A encapsulação extra criava problemas de serialização
 
-### 3. Garantia de Compatibilidade
-Adicionamos verificações defensivas:
-```python
-if not hasattr(state, 'data'):
-    state.data = StateData()
-```
+### Como funciona agora
+1. **Mesop gerencia a serialização**: O decorador `@me.stateclass` cuida de tudo internamente
+2. **Classes aninhadas são dataclasses**: `Message`, `ChatSession` e `ProcessingStep` permanecem como dataclasses
+3. **Sem camadas extras**: Acesso direto aos campos do estado
 
 ## Benefícios
 1. **Serialização correta**: Todos os dados agora são dataclasses válidas
