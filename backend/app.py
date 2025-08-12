@@ -1,5 +1,5 @@
 """
-Chat App com Claude Code SDK usando Mesop
+Chat App com Claude Code SDK usando Mesop - Versão Simplificada
 Backend Python com integração completa ao Claude Code
 """
 import mesop as me
@@ -9,7 +9,6 @@ import os
 import asyncio
 from datetime import datetime
 from typing import List, Dict, Any, Optional
-from dataclasses import dataclass, field
 import uuid
 from pathlib import Path
 import json
@@ -21,51 +20,63 @@ from claude_code_sdk import query, ClaudeCodeOptions
 # Inicializar cliente Anthropic (para uso direto da API se necessário)
 anthropic_client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-@dataclass
-class Message:
-    """Representa uma mensagem do chat"""
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    role: str = "user"  # "user" ou "assistant"
-    content: str = ""
-    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    is_streaming: bool = False
-    in_progress: bool = False
-
-@dataclass
-class ChatSession:
-    """Gerencia uma sessão de chat"""
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    messages: List[Message] = field(default_factory=list)
-    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
-    last_activity: str = field(default_factory=lambda: datetime.now().isoformat())
-    title: str = "Nova Conversa"
-    context: str = ""
-    claude_session_id: Optional[str] = None
-
-@dataclass
-class ProcessingStep:
-    """Representa um passo do processamento"""
-    type: str
-    message: str
-    data: Dict[str, Any] = field(default_factory=dict)
-    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
-
 @me.stateclass
 class State:
-    """Estado da aplicação Mesop"""
-    current_session: ChatSession = field(default_factory=ChatSession)
-    sessions: Dict[str, ChatSession] = field(default_factory=dict)
+    """Estado da aplicação Mesop - APENAS tipos primitivos"""
+    # Sessão atual
+    current_session_id: str = ""
+    current_session_title: str = "Nova Conversa"
+    current_session_messages: str = "[]"  # JSON string de mensagens
+    
+    # Todas as sessões como JSON string
+    sessions: str = "{}"  # JSON string de sessões
+    
+    # Estados da UI
     input_text: str = ""
     is_loading: bool = False
     error_message: str = ""
     show_sidebar: bool = True
     uploaded_file_content: str = ""
     uploaded_file_name: str = ""
-    use_claude_sdk: bool = True  # Usar Claude Code SDK por padrão
-    processing_steps: List[ProcessingStep] = field(default_factory=list)
+    use_claude_sdk: bool = True
+    
+    # Passos de processamento como JSON string
+    processing_steps: str = "[]"
     current_response: str = ""
     stream_content: str = ""
+
+def get_messages_list(state: State) -> List[Dict[str, Any]]:
+    """Converte string JSON de mensagens para lista"""
+    try:
+        return json.loads(state.current_session_messages)
+    except:
+        return []
+
+def set_messages_list(state: State, messages: List[Dict[str, Any]]):
+    """Converte lista de mensagens para string JSON"""
+    state.current_session_messages = json.dumps(messages)
+
+def get_sessions_dict(state: State) -> Dict[str, Dict[str, Any]]:
+    """Converte string JSON de sessões para dicionário"""
+    try:
+        return json.loads(state.sessions)
+    except:
+        return {}
+
+def set_sessions_dict(state: State, sessions: Dict[str, Dict[str, Any]]):
+    """Converte dicionário de sessões para string JSON"""
+    state.sessions = json.dumps(sessions)
+
+def get_processing_steps(state: State) -> List[Dict[str, Any]]:
+    """Converte string JSON de passos para lista"""
+    try:
+        return json.loads(state.processing_steps)
+    except:
+        return []
+
+def set_processing_steps(state: State, steps: List[Dict[str, Any]]):
+    """Converte lista de passos para string JSON"""
+    state.processing_steps = json.dumps(steps)
 
 async def call_claude_code_sdk(prompt: str, session_id: Optional[str] = None) -> tuple[str, Dict[str, Any]]:
     """
@@ -185,7 +196,7 @@ async def call_claude_code_sdk(prompt: str, session_id: Optional[str] = None) ->
         else:
             return f"Erro ao chamar Claude Code SDK: {error_msg}", {"is_error": True}
 
-def call_anthropic_api(prompt: str, messages: List[Message]) -> tuple[str, Dict[str, Any]]:
+def call_anthropic_api(prompt: str, messages: List[Dict[str, Any]]) -> tuple[str, Dict[str, Any]]:
     """
     Chama a API Anthropic diretamente
     """
@@ -193,10 +204,10 @@ def call_anthropic_api(prompt: str, messages: List[Message]) -> tuple[str, Dict[
         # Converter mensagens para formato da API
         api_messages = []
         for msg in messages:
-            if msg.content:  # Ignorar mensagens vazias
+            if msg.get('content'):  # Ignorar mensagens vazias
                 api_messages.append({
-                    "role": msg.role,
-                    "content": msg.content
+                    "role": msg.get('role', 'user'),
+                    "content": msg.get('content', '')
                 })
         
         # Adicionar prompt atual
@@ -276,11 +287,13 @@ def main_page():
                 )
             ):
                 # Passos de processamento
-                if state.processing_steps and state.is_loading:
-                    render_processing_steps(state)
+                steps = get_processing_steps(state)
+                if steps and state.is_loading:
+                    render_processing_steps(steps)
                 
                 # Mensagens do chat
-                for message in state.current_session.messages:
+                messages = get_messages_list(state)
+                for message in messages:
                     render_message(message)
                 
                 # Indicador de carregamento
@@ -345,9 +358,10 @@ def render_sidebar(state: State):
                 gap=8
             )
         ):
-            if state.sessions:
-                for session_id, session in state.sessions.items():
-                    render_session_item(session, session_id == state.current_session.id, session_id)
+            sessions = get_sessions_dict(state)
+            if sessions:
+                for session_id, session in sessions.items():
+                    render_session_item(session, session_id == state.current_session_id, session_id)
             else:
                 me.text(
                     "Nenhuma conversa ainda",
@@ -359,43 +373,21 @@ def render_sidebar(state: State):
                     )
                 )
 
-def render_session_item(session, is_active: bool, session_id: str):
+def render_session_item(session: Dict[str, Any], is_active: bool, session_id: str):
     """Renderiza um item de sessão na sidebar"""
     
-    # Verificar se session é um objeto ou dicionário e extrair propriedades
-    if hasattr(session, 'title'):
-        # É um objeto ChatSession
-        title = session.title
-        messages_count = len(session.messages)
-        # Converter last_activity string para datetime
-        if isinstance(session.last_activity, str):
-            try:
-                dt = datetime.fromisoformat(session.last_activity)
-                last_activity = dt.strftime('%H:%M')
-            except:
-                last_activity = "00:00"
-        else:
-            last_activity = session.last_activity.strftime('%H:%M')
-    elif isinstance(session, dict):
-        # É um dicionário
-        title = session.get('title', 'Nova Conversa')
-        messages_count = len(session.get('messages', []))
-        last_activity_obj = session.get('last_activity')
-        if last_activity_obj:
-            if isinstance(last_activity_obj, str):
-                try:
-                    dt = datetime.fromisoformat(last_activity_obj)
-                    last_activity = dt.strftime('%H:%M')
-                except:
-                    last_activity = str(last_activity_obj)[:5] if len(str(last_activity_obj)) > 5 else "00:00"
-            else:
-                last_activity = "00:00"
-        else:
+    title = session.get('title', 'Nova Conversa')
+    messages_count = len(session.get('messages', []))
+    last_activity = session.get('last_activity', '')
+    
+    # Formatar timestamp
+    if last_activity:
+        try:
+            dt = datetime.fromisoformat(last_activity)
+            last_activity = dt.strftime('%H:%M')
+        except:
             last_activity = "00:00"
     else:
-        # Fallback para casos inesperados
-        title = "Nova Conversa"
-        messages_count = 0
         last_activity = "00:00"
     
     with me.box(
@@ -498,9 +490,9 @@ def render_header(state: State):
                     )
                 )
 
-def render_message(message: Message):
+def render_message(message: Dict[str, Any]):
     """Renderiza uma mensagem do chat"""
-    is_user = message.role == "user"
+    is_user = message.get('role', 'user') == "user"
     
     with me.box(
         style=me.Style(
@@ -556,14 +548,18 @@ def render_message(message: Message):
                         font_size=14
                     )
                 )
+                
                 # Converter timestamp string para datetime se necessário
-                timestamp_str = message.timestamp
-                if isinstance(timestamp_str, str):
+                timestamp_str = message.get('timestamp', '')
+                if timestamp_str:
                     try:
                         dt = datetime.fromisoformat(timestamp_str)
                         timestamp_str = dt.strftime("%H:%M")
                     except:
                         timestamp_str = "00:00"
+                else:
+                    timestamp_str = "00:00"
+                    
                 me.text(
                     timestamp_str,
                     style=me.Style(
@@ -573,7 +569,7 @@ def render_message(message: Message):
                 )
                 
                 # Indicador de progresso
-                if message.in_progress:
+                if message.get('in_progress', False):
                     me.progress_spinner(
                         size=16,
                         color="primary"
@@ -588,16 +584,17 @@ def render_message(message: Message):
                     border=me.Border.all(me.BorderSide(width=1, color="rgba(255, 255, 255, 0.1)"))
                 )
             ):
-                if message.content:
+                content = message.get('content', '')
+                if content:
                     me.markdown(
-                        message.content,
+                        content,
                         style=me.Style(
                             color="rgba(255, 255, 255, 0.9)",
                             font_size=14,
                             line_height="1.6"
                         )
                     )
-                elif message.in_progress:
+                elif message.get('in_progress', False):
                     me.text(
                         "Digitando...",
                         style=me.Style(
@@ -608,8 +605,9 @@ def render_message(message: Message):
                     )
             
             # Metadados
-            if message.metadata and not message.in_progress:
-                render_message_metadata(message.metadata)
+            metadata = message.get('metadata', {})
+            if metadata and not message.get('in_progress', False):
+                render_message_metadata(metadata)
 
 def render_message_metadata(metadata: Dict[str, Any]):
     """Renderiza metadados da mensagem"""
@@ -681,7 +679,7 @@ def render_message_metadata(metadata: Dict[str, Any]):
                 )
             )
 
-def render_processing_steps(state: State):
+def render_processing_steps(steps: List[Dict[str, Any]]):
     """Renderiza passos de processamento"""
     with me.box(
         style=me.Style(
@@ -702,7 +700,7 @@ def render_processing_steps(state: State):
             )
         )
         
-        for step in state.processing_steps[-5:]:  # Mostrar últimos 5 passos
+        for step in steps[-5:]:  # Mostrar últimos 5 passos
             with me.box(
                 style=me.Style(
                     display="flex",
@@ -719,7 +717,7 @@ def render_processing_steps(state: State):
                     )
                 )
                 me.text(
-                    step.message,
+                    step.get('message', ''),
                     style=me.Style(
                         color="rgba(255, 255, 255, 0.7)",
                         font_size=13
@@ -844,20 +842,44 @@ def toggle_mode(e: me.ClickEvent):
 def handle_new_chat(e: me.ClickEvent):
     """Criar nova sessão de chat"""
     state = me.state(State)
-    new_session = ChatSession()
-    state.sessions[new_session.id] = new_session
-    state.current_session = new_session
-    state.processing_steps = []
+    
+    # Criar nova sessão como dicionário simples
+    new_session_id = str(uuid.uuid4())
+    new_session = {
+        'id': new_session_id,
+        'title': 'Nova Conversa',
+        'messages': [],
+        'created_at': datetime.now().isoformat(),
+        'last_activity': datetime.now().isoformat()
+    }
+    
+    # Salvar sessão
+    sessions = get_sessions_dict(state)
+    sessions[new_session_id] = new_session
+    set_sessions_dict(state, sessions)
+    
+    # Definir como sessão atual
+    state.current_session_id = new_session_id
+    state.current_session_title = 'Nova Conversa'
+    set_messages_list(state, [])
+    
+    # Limpar estados
+    set_processing_steps(state, [])
     state.error_message = ""
     state.input_text = ""
 
 def load_session(e: me.ClickEvent, session_id: str):
     """Carregar uma sessão existente"""
     state = me.state(State)
-    if session_id in state.sessions:
-        state.current_session = state.sessions[session_id]
+    sessions = get_sessions_dict(state)
+    
+    if session_id in sessions:
+        session = sessions[session_id]
+        state.current_session_id = session_id
+        state.current_session_title = session.get('title', 'Nova Conversa')
+        set_messages_list(state, session.get('messages', []))
         state.error_message = ""
-        state.processing_steps = []
+        set_processing_steps(state, [])
 
 def update_input(e: me.InputEvent):
     """Atualizar texto de input"""
@@ -895,15 +917,37 @@ def handle_send_message(e: me.ClickEvent):
     if not state.input_text.strip() or state.is_loading:
         return
     
+    # Se não há sessão atual, criar uma
+    if not state.current_session_id:
+        new_session_id = str(uuid.uuid4())
+        state.current_session_id = new_session_id
+        state.current_session_title = 'Nova Conversa'
+        set_messages_list(state, [])
+        
+        sessions = get_sessions_dict(state)
+        sessions[new_session_id] = {
+            'id': new_session_id,
+            'title': 'Nova Conversa',
+            'messages': [],
+            'created_at': datetime.now().isoformat(),
+            'last_activity': datetime.now().isoformat()
+        }
+        set_sessions_dict(state, sessions)
+    
     # Limpar erro
     state.error_message = ""
     
-    # Adicionar mensagem do usuário
-    user_message = Message(
-        role="user",
-        content=state.input_text
-    )
-    state.current_session.messages.append(user_message)
+    # Adicionar mensagem do usuário como dicionário
+    messages = get_messages_list(state)
+    user_message = {
+        'id': str(uuid.uuid4()),
+        'role': 'user',
+        'content': state.input_text,
+        'timestamp': datetime.now().isoformat(),
+        'metadata': {},
+        'in_progress': False
+    }
+    messages.append(user_message)
     
     # Guardar prompt e limpar input
     prompt = state.input_text
@@ -911,88 +955,116 @@ def handle_send_message(e: me.ClickEvent):
     
     # Definir carregando
     state.is_loading = True
-    state.processing_steps = []
+    set_processing_steps(state, [])
     
     # Adicionar mensagem vazia do assistente para mostrar progresso
-    assistant_message = Message(
-        role="assistant",
-        content="",
-        in_progress=True
-    )
-    state.current_session.messages.append(assistant_message)
+    assistant_message = {
+        'id': str(uuid.uuid4()),
+        'role': 'assistant',
+        'content': '',
+        'timestamp': datetime.now().isoformat(),
+        'metadata': {},
+        'in_progress': True
+    }
+    messages.append(assistant_message)
+    set_messages_list(state, messages)
     
     # Processar mensagem de forma assíncrona
     for _ in process_message_async(state, prompt, assistant_message):
         pass
 
-def process_message_async(state: State, prompt: str, assistant_message: Message):
+def process_message_async(state: State, prompt: str, assistant_message: Dict[str, Any]):
     """Processar mensagem de forma assíncrona"""
     try:
-        # Adicionar passo de processamento
-        state.processing_steps.append(
-            ProcessingStep(
-                type="inicio",
-                message="Iniciando processamento..."
-            )
-        )
+        # Adicionar passo de processamento como dicionário
+        steps = get_processing_steps(state)
+        steps.append({
+            'type': 'inicio',
+            'message': 'Iniciando processamento...',
+            'timestamp': datetime.now().isoformat()
+        })
+        set_processing_steps(state, steps)
         
         if state.use_claude_sdk:
             # Usar Claude Code SDK
-            state.processing_steps.append(
-                ProcessingStep(
-                    type="sdk",
-                    message="Chamando Claude Code SDK..."
-                )
-            )
+            steps = get_processing_steps(state)
+            steps.append({
+                'type': 'sdk',
+                'message': 'Chamando Claude Code SDK...',
+                'timestamp': datetime.now().isoformat()
+            })
+            set_processing_steps(state, steps)
             
             # Executar de forma assíncrona
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
-            session_id = state.current_session.claude_session_id
+            # Pegar session_id se existir
+            session_id = None
+            sessions = get_sessions_dict(state)
+            if state.current_session_id in sessions:
+                session_id = sessions[state.current_session_id].get('claude_session_id')
+            
             response_text, metadata = loop.run_until_complete(
                 call_claude_code_sdk(prompt, session_id)
             )
             
             # Atualizar session_id se fornecido
-            if metadata.get("session_id"):
-                state.current_session.claude_session_id = metadata["session_id"]
+            if metadata.get("session_id") and state.current_session_id in sessions:
+                sessions[state.current_session_id]['claude_session_id'] = metadata["session_id"]
+                set_sessions_dict(state, sessions)
                 
         else:
             # Usar API Anthropic
-            state.processing_steps.append(
-                ProcessingStep(
-                    type="api",
-                    message="Chamando API Anthropic..."
-                )
-            )
+            steps = get_processing_steps(state)
+            steps.append({
+                'type': 'api',
+                'message': 'Chamando API Anthropic...',
+                'timestamp': datetime.now().isoformat()
+            })
+            set_processing_steps(state, steps)
+            
+            # Converter mensagens para formato da API
+            messages = get_messages_list(state)
+            messages_for_api = messages[:-2] if len(messages) > 2 else []
             
             response_text, metadata = call_anthropic_api(
                 prompt, 
-                state.current_session.messages[:-2]  # Excluir última mensagem vazia
+                messages_for_api
             )
         
         # Atualizar mensagem do assistente
-        assistant_message.content = response_text
-        assistant_message.metadata = metadata
-        assistant_message.in_progress = False
+        messages = get_messages_list(state)
+        if messages and messages[-1]['id'] == assistant_message['id']:
+            messages[-1]['content'] = response_text
+            messages[-1]['metadata'] = metadata
+            messages[-1]['in_progress'] = False
+            set_messages_list(state, messages)
         
         # Atualizar sessão
-        state.current_session.last_activity = datetime.now().isoformat()
-        if state.current_session.title == "Nova Conversa" and len(prompt) > 0:
-            state.current_session.title = prompt[:50] + "..." if len(prompt) > 50 else prompt
-        
-        # Salvar sessão
-        state.sessions[state.current_session.id] = state.current_session
+        sessions = get_sessions_dict(state)
+        if state.current_session_id in sessions:
+            sessions[state.current_session_id]['last_activity'] = datetime.now().isoformat()
+            sessions[state.current_session_id]['messages'] = messages
+            
+            # Atualizar título se for primeira mensagem
+            if state.current_session_title == "Nova Conversa" and len(prompt) > 0:
+                new_title = prompt[:50] + "..." if len(prompt) > 50 else prompt
+                state.current_session_title = new_title
+                sessions[state.current_session_id]['title'] = new_title
+            
+            set_sessions_dict(state, sessions)
         
     except Exception as error:
         state.error_message = f"Erro: {str(error)}"
         # Remover mensagem vazia do assistente em caso de erro
-        if state.current_session.messages and state.current_session.messages[-1].in_progress:
-            state.current_session.messages.pop()
+        messages = get_messages_list(state)
+        if messages and messages[-1].get('in_progress', False):
+            messages.pop()
+            set_messages_list(state, messages)
     finally:
         state.is_loading = False
-        state.processing_steps = []
+        set_processing_steps(state, [])
         
     yield
 
