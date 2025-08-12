@@ -1,23 +1,25 @@
+#!/usr/bin/env python3
 """
 Chat App com Claude Code SDK usando Mesop
 Backend Python com integração completa ao Claude Code
 """
+import os
+import sys
+import uuid
+import json
+import base64
+import asyncio
+from datetime import datetime
+from pathlib import Path
+from typing import List, Dict, Any, Optional
+from dataclasses import dataclass, field, asdict, is_dataclass
+
 import mesop as me
 import mesop.labs as mel
 from anthropic import Anthropic
-import os
-import asyncio
-from datetime import datetime
-from typing import List, Dict, Any, Optional
-from dataclasses import dataclass, field
-import uuid
-from pathlib import Path
-import json
-import base64
 
 # Claude Code SDK
 from claude_code_sdk import query, ClaudeCodeOptions
-from dataclasses import is_dataclass
 
 # Inicializar cliente Anthropic (para uso direto da API se necessário)
 anthropic_client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
@@ -28,7 +30,7 @@ class Message:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     role: str = "user"  # "user" ou "assistant"
     content: str = ""
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
     metadata: Dict[str, Any] = field(default_factory=dict)
     is_streaming: bool = False
     in_progress: bool = False
@@ -38,8 +40,8 @@ class ChatSession:
     """Gerencia uma sessão de chat"""
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     messages: List[Message] = field(default_factory=list)
-    created_at: datetime = field(default_factory=datetime.now)
-    last_activity: datetime = field(default_factory=datetime.now)
+    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    last_activity: str = field(default_factory=lambda: datetime.now().isoformat())
     title: str = "Nova Conversa"
     context: str = ""
     claude_session_id: Optional[str] = None
@@ -50,7 +52,7 @@ class ProcessingStep:
     type: str
     message: str
     data: Dict[str, Any] = field(default_factory=dict)
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
 
 # Funções auxiliares para conversão e validação
 def dict_to_chat_session(session_dict: dict) -> ChatSession:
@@ -87,34 +89,29 @@ def dict_to_chat_session(session_dict: dict) -> ChatSession:
                 # Converter timestamp se existir
                 if 'timestamp' in msg:
                     if isinstance(msg['timestamp'], str):
-                        try:
-                            new_msg.timestamp = datetime.fromisoformat(msg['timestamp'])
-                        except:
-                            new_msg.timestamp = datetime.now()
-                    elif isinstance(msg['timestamp'], datetime):
                         new_msg.timestamp = msg['timestamp']
+                    elif isinstance(msg['timestamp'], datetime):
+                        new_msg.timestamp = msg['timestamp'].isoformat()
                     else:
-                        new_msg.timestamp = datetime.now()
+                        new_msg.timestamp = datetime.now().isoformat()
                 session.messages.append(new_msg)
         
         # Converter timestamps
         if 'created_at' in session_dict:
             if isinstance(session_dict['created_at'], str):
-                try:
-                    session.created_at = datetime.fromisoformat(session_dict['created_at'])
-                except:
-                    session.created_at = datetime.now()
-            elif isinstance(session_dict['created_at'], datetime):
                 session.created_at = session_dict['created_at']
+            elif isinstance(session_dict['created_at'], datetime):
+                session.created_at = session_dict['created_at'].isoformat()
+            else:
+                session.created_at = datetime.now().isoformat()
         
         if 'last_activity' in session_dict:
             if isinstance(session_dict['last_activity'], str):
-                try:
-                    session.last_activity = datetime.fromisoformat(session_dict['last_activity'])
-                except:
-                    session.last_activity = datetime.now()
-            elif isinstance(session_dict['last_activity'], datetime):
                 session.last_activity = session_dict['last_activity']
+            elif isinstance(session_dict['last_activity'], datetime):
+                session.last_activity = session_dict['last_activity'].isoformat()
+            else:
+                session.last_activity = datetime.now().isoformat()
     
     return session
 
@@ -138,10 +135,15 @@ class State:
     
     def validate_sessions(self):
         """Valida e corrige sessões para garantir que são objetos ChatSession"""
-        from dataclasses import is_dataclass
+        # is_dataclass já importado no topo
+        import sys
+        
+        # Debug
+        print(f"[DEBUG] validate_sessions chamado", file=sys.stderr)
         
         # Validar current_session
         if not isinstance(self.current_session, ChatSession):
+            print(f"[WARNING] current_session não é ChatSession: {type(self.current_session)}", file=sys.stderr)
             if isinstance(self.current_session, dict):
                 # Converter dict para ChatSession
                 self.current_session = dict_to_chat_session(self.current_session)
@@ -149,16 +151,24 @@ class State:
                 # Criar nova sessão se inválida
                 self.current_session = ChatSession()
         
+        # Verificar se current_session é dataclass
+        if not is_dataclass(self.current_session):
+            print(f"[ERROR] current_session não é dataclass após validação!", file=sys.stderr)
+        
         # Validar todas as sessões no dicionário
         for session_id in list(self.sessions.keys()):
             session = self.sessions[session_id]
             if not isinstance(session, ChatSession):
+                print(f"[WARNING] Session {session_id} não é ChatSession: {type(session)}", file=sys.stderr)
                 if isinstance(session, dict):
                     # Converter dict para ChatSession
                     self.sessions[session_id] = dict_to_chat_session(session)
                 else:
                     # Remover sessão inválida
+                    print(f"[WARNING] Removendo sessão inválida {session_id}", file=sys.stderr)
                     del self.sessions[session_id]
+            elif not is_dataclass(session):
+                print(f"[ERROR] Session {session_id} não é dataclass!", file=sys.stderr)
 
 def validate_state_before_render(state: State):
     """Valida estado antes de renderizar para evitar erros de serialização"""
@@ -499,7 +509,15 @@ def render_session_item(session, is_active: bool, session_id: str):
         # É um objeto ChatSession
         title = session.title
         messages_count = len(session.messages)
-        last_activity = session.last_activity.strftime('%H:%M')
+        # Converter timestamp ISO para exibição
+        try:
+            if isinstance(session.last_activity, str):
+                dt = datetime.fromisoformat(session.last_activity)
+                last_activity = dt.strftime('%H:%M')
+            else:
+                last_activity = "00:00"
+        except:
+            last_activity = "00:00"
     elif isinstance(session, dict):
         # É um dicionário
         title = session.get('title', 'Nova Conversa')
@@ -676,8 +694,17 @@ def render_message(message: Message):
                         font_size=14
                     )
                 )
+                # Formatar timestamp string ISO para exibição
+                timestamp_display = "00:00"
+                try:
+                    if isinstance(message.timestamp, str):
+                        dt = datetime.fromisoformat(message.timestamp)
+                        timestamp_display = dt.strftime("%H:%M")
+                except:
+                    pass
+                
                 me.text(
-                    message.timestamp.strftime("%H:%M"),
+                    timestamp_display,
                     style=me.Style(
                         color="#9e9e9e",
                         font_size=12
@@ -955,7 +982,18 @@ def toggle_mode(e: me.ClickEvent):
 
 def handle_new_chat(e: me.ClickEvent):
     """Criar nova sessão de chat"""
+    import sys
+    # is_dataclass já importado no topo
+    
     state = me.state(State)
+    
+    # Debug: verificar estado antes
+    print(f"[DEBUG] handle_new_chat - Estado inicial:", file=sys.stderr)
+    print(f"  current_session type: {type(state.current_session)}", file=sys.stderr)
+    print(f"  current_session is dataclass: {is_dataclass(state.current_session)}", file=sys.stderr)
+    print(f"  sessions count: {len(state.sessions)}", file=sys.stderr)
+    for sid, sess in state.sessions.items():
+        print(f"  session {sid} type: {type(sess)}, is dataclass: {is_dataclass(sess)}", file=sys.stderr)
     
     # Validar sessões existentes primeiro
     state.validate_sessions()
@@ -964,14 +1002,30 @@ def handle_new_chat(e: me.ClickEvent):
     new_session = ChatSession()
     new_session.messages = []  # Garantir lista vazia
     
+    # Debug: verificar nova sessão
+    print(f"[DEBUG] Nova sessão criada:", file=sys.stderr)
+    print(f"  new_session type: {type(new_session)}", file=sys.stderr)
+    print(f"  new_session is dataclass: {is_dataclass(new_session)}", file=sys.stderr)
+    print(f"  new_session.id: {new_session.id}", file=sys.stderr)
+    
     # Garantir que é um objeto, não dict
     assert isinstance(new_session, ChatSession), "new_session deve ser ChatSession"
+    assert is_dataclass(new_session), "new_session deve ser dataclass"
     
     # Salvar no dicionário como objeto ChatSession
     state.sessions[new_session.id] = new_session
     
     # Definir como sessão atual (sempre objeto)
     state.current_session = new_session
+    
+    # Debug: verificar estado depois
+    print(f"[DEBUG] Estado após criar nova sessão:", file=sys.stderr)
+    print(f"  current_session type: {type(state.current_session)}", file=sys.stderr)
+    print(f"  current_session is dataclass: {is_dataclass(state.current_session)}", file=sys.stderr)
+    saved_session = state.sessions.get(new_session.id)
+    if saved_session:
+        print(f"  saved session type: {type(saved_session)}", file=sys.stderr)
+        print(f"  saved session is dataclass: {is_dataclass(saved_session)}", file=sys.stderr)
     
     # Limpar outros estados
     state.processing_steps = []
@@ -1200,9 +1254,9 @@ def process_message_async(state: State, prompt: str, assistant_message: Message)
         
         # Atualizar sessão de forma segura
         if hasattr(state.current_session, 'last_activity'):
-            state.current_session.last_activity = datetime.now()
+            state.current_session.last_activity = datetime.now().isoformat()
         elif isinstance(state.current_session, dict):
-            state.current_session['last_activity'] = datetime.now()
+            state.current_session['last_activity'] = datetime.now().isoformat()
         
         # Atualizar título
         current_title = ""
