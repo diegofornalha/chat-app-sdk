@@ -153,11 +153,11 @@ def dict_to_chat_session(session_dict: dict) -> ChatSession:
 
 @me.stateclass
 class State:
-    """Estado da aplicação"""
-    # IMPORTANTE: current_session deve sempre ser um objeto ChatSession, nunca dict
-    current_session: ChatSession = field(default_factory=create_new_session)
-    # sessions armazena objetos ChatSession, não dicts
-    sessions: Dict[str, ChatSession] = field(default_factory=dict)
+    """Estado da aplicação - usa tipos primitivos para evitar problemas de serialização"""
+    # IMPORTANTE: Armazenamos como dict para evitar problemas de serialização do Mesop
+    current_session: Dict[str, Any] = field(default_factory=lambda: dataclasses.asdict(create_new_session()))
+    # sessions armazena dicts, não objetos ChatSession
+    sessions: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     input_text: str = ""
     is_loading: bool = False
     error_message: str = ""
@@ -165,7 +165,7 @@ class State:
     uploaded_file_content: str = ""
     uploaded_file_name: str = ""
     use_claude_sdk: bool = True  # Usar Claude Code SDK por padrão
-    processing_steps: List[ProcessingStep] = field(default_factory=list)
+    processing_steps: List[Dict[str, Any]] = field(default_factory=list)
     current_response: str = ""
     stream_content: str = ""
     
