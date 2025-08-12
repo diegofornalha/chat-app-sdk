@@ -382,10 +382,14 @@ def render_session_item(session, is_active: bool, session_id: str):
         messages_count = len(session.get('messages', []))
         last_activity_obj = session.get('last_activity')
         if last_activity_obj:
-            if hasattr(last_activity_obj, 'strftime'):
-                last_activity = last_activity_obj.strftime('%H:%M')
+            if isinstance(last_activity_obj, str):
+                try:
+                    dt = datetime.fromisoformat(last_activity_obj)
+                    last_activity = dt.strftime('%H:%M')
+                except:
+                    last_activity = str(last_activity_obj)[:5] if len(str(last_activity_obj)) > 5 else "00:00"
             else:
-                last_activity = str(last_activity_obj)
+                last_activity = "00:00"
         else:
             last_activity = "00:00"
     else:
