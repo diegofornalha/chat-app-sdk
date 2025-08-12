@@ -91,7 +91,29 @@ async def call_claude_code_sdk(prompt: str, session_id: Optional[str] = None) ->
             # Processar mensagens - verificar se é dicionário ou objeto
             if hasattr(message, '__dict__'):
                 # É um objeto, usar dot notation
-                if hasattr(message, 'type') and message.type == "result":
+                # Verificar se é um ResultMessage pelo subtype
+                if hasattr(message, 'subtype') and getattr(message, 'subtype', '') == 'success':
+                    # É um ResultMessage de sucesso
+                    response_text = getattr(message, 'result', '')
+                    
+                    # Extrair dados de uso se disponível
+                    usage_data = getattr(message, 'usage', {})
+                    if isinstance(usage_data, dict):
+                        input_tokens = usage_data.get('input_tokens', 0)
+                        output_tokens = usage_data.get('output_tokens', 0)
+                    else:
+                        input_tokens = 0
+                        output_tokens = 0
+                    
+                    metadata = {
+                        "cost_usd": getattr(message, 'total_cost_usd', 0),
+                        "duration_ms": getattr(message, 'duration_ms', 0),
+                        "num_turns": getattr(message, 'num_turns', 0),
+                        "session_id": getattr(message, 'session_id', None),
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens
+                    }
+                elif hasattr(message, 'type') and message.type == "result":
                     if not getattr(message, 'is_error', False):
                         response_text = getattr(message, 'result', '')
                         metadata = {
@@ -140,12 +162,13 @@ async def call_claude_code_sdk(prompt: str, session_id: Optional[str] = None) ->
         
         # Dar mensagens mais específicas para erros comuns
         if "exit code 1" in error_msg:
-            return ("❌ **Claude Code não está autenticado**\n\n" +
-                   "O Claude Code CLI precisa estar autenticado para funcionar.\n\n" +
+            return ("❌ **Claude Code não está autenticado OU seu limite acabou**\n\n" +
+                   "O Claude Code CLI precisa estar autenticado para funcionar ou você atingiu seu limite de uso.\n\n" +
                    "**Como resolver:**\n" +
                    "1. Execute no terminal: `claude auth login`\n" +
                    "2. Siga as instruções para fazer login\n" +
-                   "3. Reinicie o servidor\n\n" +
+                   "3. Reinicie o servidor\n" +
+                   "4. Se já está autenticado, aguarde o reset do limite mensal\n\n" +
                    "**Alternativa:** Use o modo 'API Direta' no toggle do header"), {"is_error": True, "needs_setup": True}
         elif "CLINotFoundError" in error_msg or "command not found" in error_msg:
             return ("❌ **Claude Code CLI não encontrado**\n\n" +
@@ -574,10 +597,31 @@ def render_message_metadata(metadata: Dict[str, Any]):
         style=me.Style(
             display="flex",
             gap=15,
-            margin=me.Margin(top=8)
+            margin=me.Margin(top=8),
+            flex_wrap="wrap"
         )
     ):
-        if "cost_usd" in metadata and metadata["cost_usd"]:
+        # Mostrar tokens se disponível
+        if "input_tokens" in metadata and metadata["input_tokens"]:
+            me.text(
+                f"📥 {metadata['input_tokens']} tokens",
+                style=me.Style(
+                    color="rgba(255, 255, 255, 0.5)",
+                    font_size=12
+                )
+            )
+        
+        if "output_tokens" in metadata and metadata["output_tokens"]:
+            me.text(
+                f"📤 {metadata['output_tokens']} tokens",
+                style=me.Style(
+                    color="rgba(255, 255, 255, 0.5)",
+                    font_size=12
+                )
+            )
+        
+        # Mostrar custo apenas se não tiver info de tokens
+        if "cost_usd" in metadata and metadata["cost_usd"] and not metadata.get("input_tokens"):
             me.text(
                 f"💰 ${metadata['cost_usd']:.4f}",
                 style=me.Style(
@@ -586,18 +630,19 @@ def render_message_metadata(metadata: Dict[str, Any]):
                 )
             )
         
-        if "duration_ms" in metadata:
+        if "duration_ms" in metadata and metadata["duration_ms"]:
+            duration_seconds = metadata['duration_ms'] / 1000
             me.text(
-                f"⏱️ {metadata['duration_ms']:.0f}ms",
+                f"⏱️ {duration_seconds:.1f}s",
                 style=me.Style(
                     color="rgba(255, 255, 255, 0.5)",
                     font_size=12
                 )
             )
         
-        if "num_turns" in metadata:
+        if "num_turns" in metadata and metadata["num_turns"]:
             me.text(
-                f"🔄 {metadata['num_turns']} turnos",
+                f"🔄 {metadata['num_turns']} turno{'s' if metadata['num_turns'] > 1 else ''}",
                 style=me.Style(
                     color="rgba(255, 255, 255, 0.5)",
                     font_size=12
