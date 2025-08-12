@@ -382,12 +382,21 @@ def main_page():
     # INICIALIZAÇÃO CRÍTICA: Garantir que o estado inicial seja válido
     # Isso previne o erro 'asdict() should be called on dataclass instances'
     
-    # Se o estado não tem sessões ou current_session não é válido, inicializar
+    # SEMPRE normalizar current_session, mesmo que exista
+    if hasattr(state, 'current_session') and state.current_session:
+        state.current_session = ensure_chatsession(state.current_session)
+    else:
+        state.current_session = create_new_session()
+    
+    # Garantir que sessions existe e normalizar todos os valores
     if not hasattr(state, 'sessions') or state.sessions is None:
         state.sessions = {}
+    else:
+        # Normalizar todas as sessões existentes
+        state.sessions = normalize_sessions(state.sessions)
     
-    if not hasattr(state, 'current_session') or state.current_session is None:
-        state.current_session = create_new_session()
+    # Garantir que current_session está em sessions
+    if state.current_session.id not in state.sessions:
         state.sessions[state.current_session.id] = state.current_session
     
     # IMPORTANTE: Validar estado antes de renderizar para evitar erros de serialização
@@ -434,11 +443,9 @@ def main_page():
                     render_processing_steps(state)
                 
                 # Mensagens do chat
-                messages = []
-                if hasattr(state.current_session, 'messages'):
-                    messages = state.current_session.messages
-                elif isinstance(state.current_session, dict):
-                    messages = state.current_session.get('messages', [])
+                # SEMPRE usar dataclass, nunca dict
+                state.current_session = ensure_chatsession(state.current_session)
+                messages = state.current_session.messages if state.current_session else []
                 
                 for message in messages:
                     render_message(message)
@@ -510,12 +517,9 @@ def render_sidebar(state: State):
         ):
             if state.sessions:
                 for session_id, session in state.sessions.items():
-                    # Obter ID da sessão atual de forma segura
-                    current_session_id = None
-                    if hasattr(state.current_session, 'id'):
-                        current_session_id = state.current_session.id
-                    elif isinstance(state.current_session, dict):
-                        current_session_id = state.current_session.get('id')
+                    # Obter ID da sessão atual - sempre dataclass
+                    state.current_session = ensure_chatsession(state.current_session)
+                    current_session_id = state.current_session.id if state.current_session else None
                     
                     render_session_item(session, session_id == current_session_id, session_id)
             else:
@@ -1010,25 +1014,48 @@ def toggle_mode(e: me.ClickEvent):
 
 def handle_new_chat(e: me.ClickEvent):
     """Criar nova sessão de chat"""
-    state = me.state(State)
-    
-    # Validar sessões existentes primeiro
-    state.validate_sessions()
-    
-    # USAR FACTORY: Criar nova sessão com valores seguros
-    new_session = create_new_session(title="Nova Conversa")
-    
-    # Salvar no dicionário como objeto ChatSession
-    state.sessions[new_session.id] = new_session
-    
-    # USAR SAVE_SESSION: Garantir que seja salvo como ChatSession
-    saved_session = save_session(state, new_session)
-    state.current_session = saved_session
-    
-    # Limpar outros estados
-    state.processing_steps = []
-    state.error_message = ""
-    state.input_text = ""
+    try:
+        state = me.state(State)
+        
+        # Validar sessões existentes primeiro
+        state.validate_sessions()
+        
+        # USAR FACTORY: Criar nova sessão com valores seguros
+        new_session = create_new_session(title="Nova Conversa")
+        
+        # PROTEÇÃO EXTRA: Garantir que todos os campos são strings
+        if not isinstance(new_session.created_at, str):
+            new_session.created_at = datetime.now().isoformat()
+        if not isinstance(new_session.last_activity, str):
+            new_session.last_activity = datetime.now().isoformat()
+        
+        # Garantir que messages é lista vazia
+        if new_session.messages is None:
+            new_session.messages = []
+        
+        # Salvar usando ensure_chatsession para garantir normalização
+        normalized_session = ensure_chatsession(new_session)
+        state.sessions[normalized_session.id] = normalized_session
+        state.current_session = normalized_session
+        
+        # Limpar outros estados
+        state.processing_steps = []
+        state.error_message = ""
+        state.input_text = ""
+        
+        # Validar novamente após mudanças
+        state.validate_sessions()
+        
+    except Exception as e:
+        import sys
+        print(f"[ERROR] handle_new_chat falhou: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        
+        # Tentar recuperar criando sessão mínima
+        state = me.state(State)
+        state.current_session = create_new_session()
+        state.error_message = f"Erro ao criar nova sessão: {str(e)}"
 
 def load_session(e: me.ClickEvent, session_id: str):
     """Carregar uma sessão existente"""
@@ -1152,22 +1179,16 @@ def process_message_async(state: State, prompt: str, assistant_message: Message)
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
-            # Obter session_id de forma segura
-            session_id = None
-            if hasattr(state.current_session, 'claude_session_id'):
-                session_id = state.current_session.claude_session_id
-            elif isinstance(state.current_session, dict):
-                session_id = state.current_session.get('claude_session_id')
+            # Garantir que current_session é dataclass
+            state.current_session = ensure_chatsession(state.current_session)
+            session_id = state.current_session.claude_session_id if state.current_session else None
             response_text, metadata = loop.run_until_complete(
                 call_claude_code_sdk(prompt, session_id)
             )
             
-            # Atualizar session_id se fornecido de forma segura
-            if metadata.get("session_id"):
-                if hasattr(state.current_session, 'claude_session_id'):
-                    state.current_session.claude_session_id = metadata["session_id"]
-                elif isinstance(state.current_session, dict):
-                    state.current_session['claude_session_id'] = metadata["session_id"]
+            # Atualizar session_id - sempre dataclass
+            if metadata.get("session_id") and state.current_session:
+                state.current_session.claude_session_id = metadata["session_id"]
                 
         else:
             # Usar API Anthropic
@@ -1178,12 +1199,9 @@ def process_message_async(state: State, prompt: str, assistant_message: Message)
                 )
             )
             
-            # Obter mensagens de forma segura
-            messages_list = []
-            if hasattr(state.current_session, 'messages'):
-                messages_list = state.current_session.messages[:-2]
-            elif isinstance(state.current_session, dict):
-                messages_list = state.current_session.get('messages', [])[:-2]
+            # Obter mensagens - sempre dataclass
+            state.current_session = ensure_chatsession(state.current_session)
+            messages_list = state.current_session.messages[:-2] if state.current_session and len(state.current_session.messages) > 2 else []
             
             response_text, metadata = call_anthropic_api(
                 prompt, 
@@ -1195,39 +1213,26 @@ def process_message_async(state: State, prompt: str, assistant_message: Message)
         assistant_message.metadata = metadata
         assistant_message.in_progress = False
         
-        # Atualizar sessão de forma segura
-        if hasattr(state.current_session, 'last_activity'):
-            state.current_session.last_activity = datetime.now().isoformat()
-        elif isinstance(state.current_session, dict):
-            state.current_session['last_activity'] = datetime.now().isoformat()
+        # Garantir que current_session é sempre dataclass
+        state.current_session = ensure_chatsession(state.current_session)
         
-        # Atualizar título
-        current_title = ""
-        if hasattr(state.current_session, 'title'):
-            current_title = state.current_session.title
-        elif isinstance(state.current_session, dict):
-            current_title = state.current_session.get('title', '')
+        # Atualizar sessão - sempre dataclass
+        state.current_session.last_activity = datetime.now().isoformat()
         
-        if current_title == "Nova Conversa" and len(prompt) > 0:
+        # Atualizar título se necessário
+        if state.current_session.title == "Nova Conversa" and len(prompt) > 0:
             new_title = prompt[:50] + "..." if len(prompt) > 50 else prompt
-            if hasattr(state.current_session, 'title'):
-                state.current_session.title = new_title
-            elif isinstance(state.current_session, dict):
-                state.current_session['title'] = new_title
+            state.current_session.title = new_title
         
         # Salvar sessão (current_session sempre é ChatSession)
         state.sessions[state.current_session.id] = state.current_session
         
     except Exception as error:
         state.error_message = f"Erro: {str(error)}"
-        # Remover mensagem vazia do assistente em caso de erro
-        if hasattr(state.current_session, 'messages'):
-            if state.current_session.messages and state.current_session.messages[-1].in_progress:
-                state.current_session.messages.pop()
-        elif isinstance(state.current_session, dict):
-            messages = state.current_session.get('messages', [])
-            if messages and messages[-1].in_progress:
-                messages.pop()
+        # Remover mensagem vazia do assistente em caso de erro - sempre dataclass
+        state.current_session = ensure_chatsession(state.current_session)
+        if state.current_session.messages and state.current_session.messages[-1].in_progress:
+            state.current_session.messages.pop()
     finally:
         state.is_loading = False
         state.processing_steps = []
