@@ -1,50 +1,38 @@
 [
   {
-    "timestamp": 1755022504645,
+    "timestamp": 1755025148749,
     "memoryTotal": 8589934592,
-    "memoryUsed": 8445165568,
-    "memoryFree": 144769024,
-    "memoryUsagePercent": 98.31466674804688,
-    "memoryEfficiency": 1.685333251953125,
+    "memoryUsed": 8417329152,
+    "memoryFree": 172605440,
+    "memoryUsagePercent": 97.99060821533203,
+    "memoryEfficiency": 2.0093917846679688,
     "cpuCount": 8,
-    "cpuLoad": 0.47772216796875,
+    "cpuLoad": 0.393798828125,
     "platform": "darwin",
-    "uptime": 47094
+    "uptime": 49738
   },
   {
-    "timestamp": 1755022534645,
+    "timestamp": 1755025178749,
     "memoryTotal": 8589934592,
-    "memoryUsed": 8395259904,
-    "memoryFree": 194674688,
-    "memoryUsagePercent": 97.73368835449219,
-    "memoryEfficiency": 2.2663116455078125,
+    "memoryUsed": 8482848768,
+    "memoryFree": 107085824,
+    "memoryUsagePercent": 98.75335693359375,
+    "memoryEfficiency": 1.24664306640625,
     "cpuCount": 8,
-    "cpuLoad": 0.75640869140625,
+    "cpuLoad": 0.3392333984375,
     "platform": "darwin",
-    "uptime": 47124
+    "uptime": 49768
   },
   {
-    "timestamp": 1755022564648,
+    "timestamp": 1755025208751,
     "memoryTotal": 8589934592,
-    "memoryUsed": 8476344320,
-    "memoryFree": 113590272,
-    "memoryUsagePercent": 98.6776351928711,
-    "memoryEfficiency": 1.3223648071289062,
+    "memoryUsed": 8278573056,
+    "memoryFree": 311361536,
+    "memoryUsagePercent": 96.37527465820312,
+    "memoryEfficiency": 3.624725341796875,
     "cpuCount": 8,
-    "cpuLoad": 0.6856689453125,
+    "cpuLoad": 0.33416748046875,
     "platform": "darwin",
-    "uptime": 47154
-  },
-  {
-    "timestamp": 1755022594652,
-    "memoryTotal": 8589934592,
-    "memoryUsed": 8379072512,
-    "memoryFree": 210862080,
-    "memoryUsagePercent": 97.54524230957031,
-    "memoryEfficiency": 2.4547576904296875,
-    "cpuCount": 8,
-    "cpuLoad": 0.540283203125,
-    "platform": "darwin",
-    "uptime": 47184
+    "uptime": 49798
   }
 ]
