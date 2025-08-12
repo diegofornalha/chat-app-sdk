@@ -1,0 +1,10 @@
+{
+  "default": [
+    {
+      "key": "architect_requirements",
+      "value": "Sistema chat-app-sdk: Frontend React + Backend Python/Mesop. Componentes: UI React com TypeScript, Backend com Claude Code SDK, Integração via Socket.io. Deps: Anthropic API, Claude Code SDK, React, Mesop. Security: API key auth, session management. Estado: mensagens, sessões, processamento SDK.",
+      "namespace": "default",
+      "timestamp": 1755015945385
+    }
+  ]
+}
