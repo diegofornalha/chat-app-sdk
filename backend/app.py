@@ -55,13 +55,49 @@ class ProcessingStep:
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
 
 # Funções auxiliares para conversão e validação
+
+def ensure_chatsession(obj: Any) -> ChatSession:
+    """Garante que o objeto seja uma ChatSession válida"""
+    if isinstance(obj, ChatSession):
+        return obj
+    elif isinstance(obj, dict):
+        return dict_to_chat_session(obj)
+    else:
+        # Criar nova sessão se inválido
+        return create_new_session()
+
+def normalize_sessions(sessions: Dict[str, Any]) -> Dict[str, ChatSession]:
+    """Normaliza todas as sessões para garantir que sejam ChatSession"""
+    normalized = {}
+    for session_id, session in sessions.items():
+        normalized[session_id] = ensure_chatsession(session)
+    return normalized
+
+def create_new_session(title: str = "Nova Conversa") -> ChatSession:
+    """Factory para criar novas sessões com valores seguros"""
+    return ChatSession(
+        id=str(uuid.uuid4()),
+        title=title,
+        messages=[],
+        created_at=datetime.now().isoformat(),
+        last_activity=datetime.now().isoformat(),
+        context="",
+        claude_session_id=None
+    )
+
+def save_session(state: 'State', session: Any) -> None:
+    """Salva sessão no estado garantindo que seja ChatSession"""
+    session = ensure_chatsession(session)
+    state.sessions[session.id] = session
+    return session
+
 def dict_to_chat_session(session_dict: dict) -> ChatSession:
     """Converte um dicionário para objeto ChatSession de forma segura"""
     if isinstance(session_dict, ChatSession):
         return session_dict
     
     # Criar nova sessão
-    session = ChatSession()
+    session = create_new_session()
     
     # Copiar campos básicos
     if isinstance(session_dict, dict):
@@ -119,7 +155,7 @@ def dict_to_chat_session(session_dict: dict) -> ChatSession:
 class State:
     """Estado da aplicação"""
     # IMPORTANTE: current_session deve sempre ser um objeto ChatSession, nunca dict
-    current_session: ChatSession = field(default_factory=ChatSession)
+    current_session: ChatSession = field(default_factory=create_new_session)
     # sessions armazena objetos ChatSession, não dicts
     sessions: Dict[str, ChatSession] = field(default_factory=dict)
     input_text: str = ""
@@ -134,41 +170,27 @@ class State:
     stream_content: str = ""
     
     def validate_sessions(self):
-        """Valida e corrige sessões para garantir que são objetos ChatSession"""
-        # is_dataclass já importado no topo
-        import sys
+        """Valida e corrige sessões para garantir que são objetos ChatSession
         
-        # Debug
-        print(f"[DEBUG] validate_sessions chamado", file=sys.stderr)
+        Esta função é chamada automaticamente antes de cada renderização para
+        garantir que todas as sessões sejam dataclasses válidas, não dicts.
+        Isso previne o erro: 'asdict() should be called on dataclass instances'
+        """
+        # AUTOCORREÇÃO: Normalizar current_session
+        self.current_session = ensure_chatsession(self.current_session)
         
-        # Validar current_session
-        if not isinstance(self.current_session, ChatSession):
-            print(f"[WARNING] current_session não é ChatSession: {type(self.current_session)}", file=sys.stderr)
-            if isinstance(self.current_session, dict):
-                # Converter dict para ChatSession
-                self.current_session = dict_to_chat_session(self.current_session)
-            else:
-                # Criar nova sessão se inválida
-                self.current_session = ChatSession()
+        # AUTOCORREÇÃO: Normalizar todas as sessões
+        self.sessions = normalize_sessions(self.sessions)
         
-        # Verificar se current_session é dataclass
-        if not is_dataclass(self.current_session):
-            print(f"[ERROR] current_session não é dataclass após validação!", file=sys.stderr)
+        # Garantir que existe pelo menos uma sessão
+        if not self.sessions:
+            initial_session = create_new_session()
+            self.sessions[initial_session.id] = initial_session
+            self.current_session = initial_session
         
-        # Validar todas as sessões no dicionário
-        for session_id in list(self.sessions.keys()):
-            session = self.sessions[session_id]
-            if not isinstance(session, ChatSession):
-                print(f"[WARNING] Session {session_id} não é ChatSession: {type(session)}", file=sys.stderr)
-                if isinstance(session, dict):
-                    # Converter dict para ChatSession
-                    self.sessions[session_id] = dict_to_chat_session(session)
-                else:
-                    # Remover sessão inválida
-                    print(f"[WARNING] Removendo sessão inválida {session_id}", file=sys.stderr)
-                    del self.sessions[session_id]
-            elif not is_dataclass(session):
-                print(f"[ERROR] Session {session_id} não é dataclass!", file=sys.stderr)
+        # Garantir que current_session está no dicionário
+        if self.current_session.id not in self.sessions:
+            self.sessions[self.current_session.id] = self.current_session
 
 def validate_state_before_render(state: State):
     """Valida estado antes de renderizar para evitar erros de serialização"""
@@ -177,11 +199,11 @@ def validate_state_before_render(state: State):
     
     # Garantir que current_session existe
     if not state.current_session:
-        state.current_session = ChatSession()
+        state.current_session = create_new_session()
     
     # Se não há sessões, criar uma inicial
     if not state.sessions:
-        initial_session = ChatSession()
+        initial_session = create_new_session()
         state.sessions[initial_session.id] = initial_session
         state.current_session = initial_session
 
@@ -357,6 +379,17 @@ def call_anthropic_api(prompt: str, messages: List[Message]) -> tuple[str, Dict[
 def main_page():
     state = me.state(State)
     
+    # INICIALIZAÇÃO CRÍTICA: Garantir que o estado inicial seja válido
+    # Isso previne o erro 'asdict() should be called on dataclass instances'
+    
+    # Se o estado não tem sessões ou current_session não é válido, inicializar
+    if not hasattr(state, 'sessions') or state.sessions is None:
+        state.sessions = {}
+    
+    if not hasattr(state, 'current_session') or state.current_session is None:
+        state.current_session = create_new_session()
+        state.sessions[state.current_session.id] = state.current_session
+    
     # IMPORTANTE: Validar estado antes de renderizar para evitar erros de serialização
     validate_state_before_render(state)
     
@@ -424,13 +457,8 @@ def main_page():
 def render_sidebar(state: State):
     """Renderiza a sidebar com sessões"""
     
-    # Debug: verificar tipos no estado
-    import sys
-    for session_id, session in state.sessions.items():
-        if not isinstance(session, ChatSession):
-            print(f"WARNING: Session {session_id} is {type(session)}, not ChatSession!", file=sys.stderr)
-            # Converter automaticamente
-            state.sessions[session_id] = dict_to_chat_session(session if isinstance(session, dict) else {})
+    # Validar e normalizar sessões antes de renderizar
+    state.validate_sessions()
     with me.box( 
         style=me.Style( 
             width=280, 
@@ -982,50 +1010,20 @@ def toggle_mode(e: me.ClickEvent):
 
 def handle_new_chat(e: me.ClickEvent):
     """Criar nova sessão de chat"""
-    import sys
-    # is_dataclass já importado no topo
-    
     state = me.state(State)
-    
-    # Debug: verificar estado antes
-    print(f"[DEBUG] handle_new_chat - Estado inicial:", file=sys.stderr)
-    print(f"  current_session type: {type(state.current_session)}", file=sys.stderr)
-    print(f"  current_session is dataclass: {is_dataclass(state.current_session)}", file=sys.stderr)
-    print(f"  sessions count: {len(state.sessions)}", file=sys.stderr)
-    for sid, sess in state.sessions.items():
-        print(f"  session {sid} type: {type(sess)}, is dataclass: {is_dataclass(sess)}", file=sys.stderr)
     
     # Validar sessões existentes primeiro
     state.validate_sessions()
     
-    # Criar nova sessão como objeto ChatSession apropriado
-    new_session = ChatSession()
-    new_session.messages = []  # Garantir lista vazia
-    
-    # Debug: verificar nova sessão
-    print(f"[DEBUG] Nova sessão criada:", file=sys.stderr)
-    print(f"  new_session type: {type(new_session)}", file=sys.stderr)
-    print(f"  new_session is dataclass: {is_dataclass(new_session)}", file=sys.stderr)
-    print(f"  new_session.id: {new_session.id}", file=sys.stderr)
-    
-    # Garantir que é um objeto, não dict
-    assert isinstance(new_session, ChatSession), "new_session deve ser ChatSession"
-    assert is_dataclass(new_session), "new_session deve ser dataclass"
+    # USAR FACTORY: Criar nova sessão com valores seguros
+    new_session = create_new_session(title="Nova Conversa")
     
     # Salvar no dicionário como objeto ChatSession
     state.sessions[new_session.id] = new_session
     
-    # Definir como sessão atual (sempre objeto)
-    state.current_session = new_session
-    
-    # Debug: verificar estado depois
-    print(f"[DEBUG] Estado após criar nova sessão:", file=sys.stderr)
-    print(f"  current_session type: {type(state.current_session)}", file=sys.stderr)
-    print(f"  current_session is dataclass: {is_dataclass(state.current_session)}", file=sys.stderr)
-    saved_session = state.sessions.get(new_session.id)
-    if saved_session:
-        print(f"  saved session type: {type(saved_session)}", file=sys.stderr)
-        print(f"  saved session is dataclass: {is_dataclass(saved_session)}", file=sys.stderr)
+    # USAR SAVE_SESSION: Garantir que seja salvo como ChatSession
+    saved_session = save_session(state, new_session)
+    state.current_session = saved_session
     
     # Limpar outros estados
     state.processing_steps = []
@@ -1040,69 +1038,14 @@ def load_session(e: me.ClickEvent, session_id: str):
     state.validate_sessions()
     
     if session_id in state.sessions:
-        session = state.sessions[session_id]
-        # Garantir que a sessão seja um objeto ChatSession, não um dict
-        if isinstance(session, dict):
-            # Converter dict para ChatSession
-            new_session = ChatSession()
-            new_session.id = session.get('id', new_session.id)
-            new_session.title = session.get('title', 'Nova Conversa')
-            
-            # Converter mensagens de dict para objetos Message se necessário
-            messages_list = session.get('messages', [])
-            converted_messages = []
-            for msg in messages_list:
-                if isinstance(msg, dict):
-                    # Converter dict para Message
-                    new_msg = Message(
-                        id=msg.get('id', str(uuid.uuid4())),
-                        role=msg.get('role', 'user'),
-                        content=msg.get('content', ''),
-                        metadata=msg.get('metadata', {}),
-                        is_streaming=msg.get('is_streaming', False),
-                        in_progress=msg.get('in_progress', False)
-                    )
-                    # Converter timestamp se existir
-                    if 'timestamp' in msg:
-                        if isinstance(msg['timestamp'], str):
-                            try:
-                                new_msg.timestamp = datetime.fromisoformat(msg['timestamp'])
-                            except:
-                                new_msg.timestamp = datetime.now()
-                        else:
-                            new_msg.timestamp = msg['timestamp']
-                    converted_messages.append(new_msg)
-                elif isinstance(msg, Message):
-                    converted_messages.append(msg)
-            
-            new_session.messages = converted_messages
-            new_session.context = session.get('context', '')
-            new_session.claude_session_id = session.get('claude_session_id')
-            
-            # Converter timestamps se necessário
-            if 'created_at' in session:
-                if isinstance(session['created_at'], str):
-                    try:
-                        new_session.created_at = datetime.fromisoformat(session['created_at'])
-                    except:
-                        new_session.created_at = datetime.now()
-                else:
-                    new_session.created_at = session['created_at']
-            
-            if 'last_activity' in session:
-                if isinstance(session['last_activity'], str):
-                    try:
-                        new_session.last_activity = datetime.fromisoformat(session['last_activity'])
-                    except:
-                        new_session.last_activity = datetime.now()
-                else:
-                    new_session.last_activity = session['last_activity']
-            
-            state.current_session = new_session
-            # Atualizar também no dicionário de sessões com o objeto convertido
-            state.sessions[session_id] = new_session
-        else:
-            state.current_session = session
+        # USAR ENSURE_CHATSESSION: Garantir que seja ChatSession
+        session = ensure_chatsession(state.sessions[session_id])
+        
+        # Salvar versão normalizada de volta
+        state.sessions[session_id] = session
+        state.current_session = session
+        
+        # Limpar estados
         state.error_message = ""
         state.processing_steps = []
 
@@ -1156,7 +1099,7 @@ def handle_send_message(e: me.ClickEvent):
     # Garantir que current_session seja sempre um objeto ChatSession
     if not isinstance(state.current_session, ChatSession):
         # Se não for ChatSession, criar uma nova
-        new_session = ChatSession()
+        new_session = create_new_session()
         new_session.messages = []
         state.current_session = new_session
         state.sessions[new_session.id] = new_session
