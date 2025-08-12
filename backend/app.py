@@ -27,7 +27,7 @@ class Message:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     role: str = "user"  # "user" ou "assistant"
     content: str = ""
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
     metadata: Dict[str, Any] = field(default_factory=dict)
     is_streaming: bool = False
     in_progress: bool = False
@@ -37,8 +37,8 @@ class ChatSession:
     """Gerencia uma sessão de chat"""
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     messages: List[Message] = field(default_factory=list)
-    created_at: datetime = field(default_factory=datetime.now)
-    last_activity: datetime = field(default_factory=datetime.now)
+    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    last_activity: str = field(default_factory=lambda: datetime.now().isoformat())
     title: str = "Nova Conversa"
     context: str = ""
     claude_session_id: Optional[str] = None
@@ -49,7 +49,7 @@ class ProcessingStep:
     type: str
     message: str
     data: Dict[str, Any] = field(default_factory=dict)
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
 
 @me.stateclass
 class State:
@@ -367,7 +367,15 @@ def render_session_item(session, is_active: bool, session_id: str):
         # É um objeto ChatSession
         title = session.title
         messages_count = len(session.messages)
-        last_activity = session.last_activity.strftime('%H:%M')
+        # Converter last_activity string para datetime
+        if isinstance(session.last_activity, str):
+            try:
+                dt = datetime.fromisoformat(session.last_activity)
+                last_activity = dt.strftime('%H:%M')
+            except:
+                last_activity = "00:00"
+        else:
+            last_activity = session.last_activity.strftime('%H:%M')
     elif isinstance(session, dict):
         # É um dicionário
         title = session.get('title', 'Nova Conversa')
@@ -544,8 +552,16 @@ def render_message(message: Message):
                         font_size=14
                     )
                 )
+                # Converter timestamp string para datetime se necessário
+                timestamp_str = message.timestamp
+                if isinstance(timestamp_str, str):
+                    try:
+                        dt = datetime.fromisoformat(timestamp_str)
+                        timestamp_str = dt.strftime("%H:%M")
+                    except:
+                        timestamp_str = "00:00"
                 me.text(
-                    message.timestamp.strftime("%H:%M"),
+                    timestamp_str,
                     style=me.Style(
                         color="rgba(255, 255, 255, 0.4)",
                         font_size=12
@@ -958,7 +974,7 @@ def process_message_async(state: State, prompt: str, assistant_message: Message)
         assistant_message.in_progress = False
         
         # Atualizar sessão
-        state.current_session.last_activity = datetime.now()
+        state.current_session.last_activity = datetime.now().isoformat()
         if state.current_session.title == "Nova Conversa" and len(prompt) > 0:
             state.current_session.title = prompt[:50] + "..." if len(prompt) > 50 else prompt
         
