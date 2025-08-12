@@ -51,9 +51,9 @@ class ProcessingStep:
     data: Dict[str, Any] = field(default_factory=dict)
     timestamp: datetime = field(default_factory=datetime.now)
 
-@dataclass
-class StateData:
-    """Dados serializáveis do estado"""
+@me.stateclass
+class State:
+    """Estado da aplicação Mesop"""
     current_session: ChatSession = field(default_factory=ChatSession)
     sessions: Dict[str, ChatSession] = field(default_factory=dict)
     input_text: str = ""
@@ -66,11 +66,6 @@ class StateData:
     processing_steps: List[ProcessingStep] = field(default_factory=list)
     current_response: str = ""
     stream_content: str = ""
-
-@me.stateclass 
-class State:
-    """Estado da aplicação Mesop"""
-    data: StateData = field(default_factory=StateData)
 
 async def call_claude_code_sdk(prompt: str, session_id: Optional[str] = None) -> tuple[str, Dict[str, Any]]:
     """
@@ -243,9 +238,6 @@ def call_anthropic_api(prompt: str, messages: List[Message]) -> tuple[str, Dict[
 )
 def main_page():
     state = me.state(State)
-    # Garantir que state.data existe
-    if not hasattr(state, 'data'):
-        state.data = StateData()
     
     with me.box(
         style=me.Style(
@@ -257,8 +249,8 @@ def main_page():
         )
     ):
         # Sidebar
-        if state.data.show_sidebar:
-            render_sidebar(state.data)
+        if state.show_sidebar:
+            render_sidebar(state)
         
         # Área principal do chat
         with me.box(
@@ -270,7 +262,7 @@ def main_page():
             )
         ):
             # Header
-            render_header(state.data)
+            render_header(state)
             
             # Área de mensagens
             with me.box(
@@ -284,25 +276,25 @@ def main_page():
                 )
             ):
                 # Passos de processamento
-                if state.data.processing_steps and state.data.is_loading:
-                    render_processing_steps(state.data)
+                if state.processing_steps and state.is_loading:
+                    render_processing_steps(state)
                 
                 # Mensagens do chat
-                for message in state.data.current_session.messages:
+                for message in state.current_session.messages:
                     render_message(message)
                 
                 # Indicador de carregamento
-                if state.data.is_loading:
+                if state.is_loading:
                     render_loading_indicator()
                 
                 # Mensagem de erro
-                if state.data.error_message:
-                    render_error(state.data.error_message)
+                if state.error_message:
+                    render_error(state.error_message)
             
             # Área de input
-            render_input_area(state.data)
+            render_input_area(state)
 
-def render_sidebar(state: StateData):
+def render_sidebar(state: State):
     """Renderiza a sidebar com sessões"""
     with me.box( 
         style=me.Style( 
@@ -420,7 +412,7 @@ def render_session_item(session, is_active: bool, session_id: str):
             )
         )
 
-def render_header(state: StateData):
+def render_header(state: State):
     """Renderiza o header"""
     with me.box(
         style=me.Style(
@@ -669,7 +661,7 @@ def render_message_metadata(metadata: Dict[str, Any]):
                 )
             )
 
-def render_processing_steps(state: StateData):
+def render_processing_steps(state: State):
     """Renderiza passos de processamento"""
     with me.box(
         style=me.Style(
@@ -753,7 +745,7 @@ def render_error(error_message: str):
             )
         )
 
-def render_input_area(state: StateData):
+def render_input_area(state: State):
     """Renderiza área de input"""
     with me.box(
         style=me.Style(
@@ -822,98 +814,84 @@ def render_input_area(state: StateData):
 def toggle_sidebar(e: me.ClickEvent):
     """Toggle visibilidade da sidebar"""
     state = me.state(State)
-    if not hasattr(state, 'data'):
-        state.data = StateData()
-    state.data.show_sidebar = not state.data.show_sidebar
+    state.show_sidebar = not state.show_sidebar
 
 def toggle_mode(e: me.ClickEvent):
     """Toggle entre Claude Code CLI e API Direta"""
     state = me.state(State)
-    if not hasattr(state, 'data'):
-        state.data = StateData()
-    state.data.use_claude_sdk = not state.data.use_claude_sdk
+    state.use_claude_sdk = not state.use_claude_sdk
 
 def handle_new_chat(e: me.ClickEvent):
     """Criar nova sessão de chat"""
     state = me.state(State)
-    if not hasattr(state, 'data'):
-        state.data = StateData()
     new_session = ChatSession()
-    state.data.sessions[new_session.id] = new_session
-    state.data.current_session = new_session
-    state.data.processing_steps = []
-    state.data.error_message = ""
-    state.data.input_text = ""
+    state.sessions[new_session.id] = new_session
+    state.current_session = new_session
+    state.processing_steps = []
+    state.error_message = ""
+    state.input_text = ""
 
 def load_session(e: me.ClickEvent, session_id: str):
     """Carregar uma sessão existente"""
     state = me.state(State)
-    if not hasattr(state, 'data'):
-        state.data = StateData()
-    if session_id in state.data.sessions:
-        state.data.current_session = state.data.sessions[session_id]
-        state.data.error_message = ""
-        state.data.processing_steps = []
+    if session_id in state.sessions:
+        state.current_session = state.sessions[session_id]
+        state.error_message = ""
+        state.processing_steps = []
 
 def update_input(e: me.InputEvent):
     """Atualizar texto de input"""
     state = me.state(State)
-    if not hasattr(state, 'data'):
-        state.data = StateData()
-    state.data.input_text = e.value
+    state.input_text = e.value
 
 def handle_file_upload(e: me.UploadEvent):
     """Lidar com upload de arquivo"""
     state = me.state(State)
-    if not hasattr(state, 'data'):
-        state.data = StateData()
     try:
         file_content = e.file.read()
         
         # Tentar decodificar como texto
         try:
             text_content = file_content.decode('utf-8')
-            state.data.uploaded_file_content = text_content
-            state.data.uploaded_file_name = e.file.name
+            state.uploaded_file_content = text_content
+            state.uploaded_file_name = e.file.name
             
             # Adicionar ao input
-            state.data.input_text += f"\n\nArquivo: {e.file.name}\n```\n{text_content[:1000]}\n```"
+            state.input_text += f"\n\nArquivo: {e.file.name}\n```\n{text_content[:1000]}\n```"
             if len(text_content) > 1000:
-                state.data.input_text += f"\n... (truncado, {len(text_content)} caracteres totais)"
+                state.input_text += f"\n... (truncado, {len(text_content)} caracteres totais)"
         except UnicodeDecodeError:
             # Se não for texto, converter para base64
             b64_content = base64.b64encode(file_content).decode('utf-8')
-            state.data.input_text += f"\n\nArquivo binário: {e.file.name} (base64)"
+            state.input_text += f"\n\nArquivo binário: {e.file.name} (base64)"
             
     except Exception as error:
-        state.data.error_message = f"Erro ao fazer upload do arquivo: {str(error)}"
+        state.error_message = f"Erro ao fazer upload do arquivo: {str(error)}"
 
 def handle_send_message(e: me.ClickEvent):
     """Lidar com envio de mensagem"""
     state = me.state(State)
-    if not hasattr(state, 'data'):
-        state.data = StateData()
     
-    if not state.data.input_text.strip() or state.data.is_loading:
+    if not state.input_text.strip() or state.is_loading:
         return
     
     # Limpar erro
-    state.data.error_message = ""
+    state.error_message = ""
     
     # Adicionar mensagem do usuário
     user_message = Message(
         role="user",
-        content=state.data.input_text
+        content=state.input_text
     )
-    state.data.current_session.messages.append(user_message)
+    state.current_session.messages.append(user_message)
     
     # Guardar prompt e limpar input
-    prompt = state.data.input_text
-    state.data.input_text = ""
+    prompt = state.input_text
+    state.input_text = ""
     
     # Definir carregando
-    state.data.is_loading = True
-    state.data.processing_steps = []
+    state.is_loading = True
+    state.processing_steps = []
     
     # Adicionar mensagem vazia do assistente para mostrar progresso
     assistant_message = Message(
@@ -921,13 +899,13 @@ def handle_send_message(e: me.ClickEvent):
         content="",
         in_progress=True
     )
-    state.data.current_session.messages.append(assistant_message)
+    state.current_session.messages.append(assistant_message)
     
     # Processar mensagem de forma assíncrona
-    for _ in process_message_async(state.data, prompt, assistant_message):
+    for _ in process_message_async(state, prompt, assistant_message):
         pass
 
-def process_message_async(state: StateData, prompt: str, assistant_message: Message):
+def process_message_async(state: State, prompt: str, assistant_message: Message):
     """Processar mensagem de forma assíncrona"""
     try:
         # Adicionar passo de processamento
