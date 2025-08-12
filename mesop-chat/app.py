@@ -12,6 +12,7 @@ import asyncio
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+import dataclasses
 from dataclasses import dataclass, field, asdict, is_dataclass
 
 import mesop as me
@@ -153,11 +154,11 @@ def dict_to_chat_session(session_dict: dict) -> ChatSession:
 
 @me.stateclass
 class State:
-    """Estado da aplicação - usa tipos primitivos para evitar problemas de serialização"""
-    # IMPORTANTE: Armazenamos como dict para evitar problemas de serialização do Mesop
-    current_session: Dict[str, Any] = field(default_factory=lambda: dataclasses.asdict(create_new_session()))
-    # sessions armazena dicts, não objetos ChatSession
-    sessions: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    """Estado da aplicação - usa Any para aceitar tanto dict quanto dataclass"""
+    # IMPORTANTE: Usa Any para aceitar dict do frontend e converter depois
+    current_session: Any = field(default_factory=create_new_session)
+    # sessions pode receber dicts ou ChatSession
+    sessions: Dict[str, Any] = field(default_factory=dict)
     input_text: str = ""
     is_loading: bool = False
     error_message: str = ""
@@ -165,12 +166,12 @@ class State:
     uploaded_file_content: str = ""
     uploaded_file_name: str = ""
     use_claude_sdk: bool = True  # Usar Claude Code SDK por padrão
-    processing_steps: List[Dict[str, Any]] = field(default_factory=list)
+    processing_steps: List[Any] = field(default_factory=list)
     current_response: str = ""
     stream_content: str = ""
     
     def validate_sessions(self):
-        """Valida e corrige sessões para garantir que são objetos ChatSession
+        """Valida e normaliza sessões e processing_steps para garantir tipos corretos
         
         Esta função é chamada automaticamente antes de cada renderização para
         garantir que todas as sessões sejam dataclasses válidas, não dicts.
@@ -181,6 +182,20 @@ class State:
         
         # AUTOCORREÇÃO: Normalizar todas as sessões
         self.sessions = normalize_sessions(self.sessions)
+        
+        # AUTOCORREÇÃO: Normalizar processing_steps
+        normalized_steps = []
+        for step in self.processing_steps:
+            if isinstance(step, dict):
+                # Converter dict para ProcessingStep
+                normalized_steps.append(ProcessingStep(
+                    step=step.get('step', ''),
+                    status=step.get('status', 'pending'),
+                    timestamp=step.get('timestamp', datetime.now().isoformat())
+                ))
+            elif isinstance(step, ProcessingStep):
+                normalized_steps.append(step)
+        self.processing_steps = normalized_steps
         
         # Garantir que existe pelo menos uma sessão
         if not self.sessions:
@@ -1086,6 +1101,10 @@ def handle_file_upload(e: me.UploadEvent):
     state = me.state(State)
     try:
         file_content = e.file.read()
+        file_size = len(file_content)
+        
+        # Determinar tipo de arquivo pela extensão
+        file_ext = e.file.name.split('.')[-1].lower() if '.' in e.file.name else ''
         
         # Tentar decodificar como texto
         try:
@@ -1093,17 +1112,66 @@ def handle_file_upload(e: me.UploadEvent):
             state.uploaded_file_content = text_content
             state.uploaded_file_name = e.file.name
             
+            # Criar mensagem amigável baseada no tipo de arquivo
+            file_type_desc = {
+                'py': '🐍 Python',
+                'js': '🌐 JavaScript',
+                'ts': '📘 TypeScript',
+                'jsx': '⚛️ React',
+                'tsx': '⚛️ React TypeScript',
+                'html': '🌐 HTML',
+                'css': '🎨 CSS',
+                'json': '📄 JSON',
+                'md': '📝 Markdown',
+                'txt': '📄 Texto',
+                'yaml': '📄 YAML',
+                'yml': '📄 YAML',
+                'xml': '📄 XML',
+                'sql': '🗺️ SQL',
+                'sh': '📦 Shell Script',
+                'bash': '📦 Bash Script'
+            }.get(file_ext, '📄')
+            
+            # Adicionar mensagem amigável ao chat
+            friendly_message = f"\n✅ **Arquivo carregado com sucesso!**\n\n"
+            friendly_message += f"📁 **Nome:** {e.file.name}\n"
+            friendly_message += f"{file_type_desc} **Tipo:** {file_ext.upper() if file_ext else 'Texto'}\n"
+            friendly_message += f"📏 **Tamanho:** {file_size:,} bytes\n\n"
+            
+            # Adicionar preview do código
+            lines = text_content.split('\n')
+            line_count = len(lines)
+            preview_lines = 20  # Mostrar primeiras 20 linhas
+            
+            friendly_message += f"👁️ **Preview ({min(preview_lines, line_count)} de {line_count} linhas):**\n\n"
+            friendly_message += f"```{file_ext if file_ext else 'text'}\n"
+            friendly_message += '\n'.join(lines[:preview_lines])
+            if line_count > preview_lines:
+                friendly_message += f"\n\n... ({line_count - preview_lines} linhas restantes)"
+            friendly_message += "\n```\n\n"
+            friendly_message += "💡 **Dica:** Agora você pode fazer perguntas sobre este arquivo ou pedir para modificá-lo!"
+            
             # Adicionar ao input
-            state.input_text += f"\n\nArquivo: {e.file.name}\n```\n{text_content[:1000]}\n```"
-            if len(text_content) > 1000:
-                state.input_text += f"\n... (truncado, {len(text_content)} caracteres totais)"
+            state.input_text = friendly_message
+            
         except UnicodeDecodeError:
-            # Se não for texto, converter para base64
+            # Se não for texto, tratar como arquivo binário
             b64_content = base64.b64encode(file_content).decode('utf-8')
-            state.input_text += f"\n\nArquivo binário: {e.file.name} (base64)"
+            
+            # Mensagem amigável para arquivo binário
+            friendly_message = f"\n✅ **Arquivo binário carregado!**\n\n"
+            friendly_message += f"📁 **Nome:** {e.file.name}\n"
+            friendly_message += f"🔒 **Tipo:** Arquivo binário\n"
+            friendly_message += f"📏 **Tamanho:** {file_size:,} bytes\n\n"
+            friendly_message += "⚠️ Este é um arquivo binário (não-texto).\n"
+            friendly_message += "O conteúdo foi codificado em base64 para processamento."
+            
+            state.input_text = friendly_message
+            state.uploaded_file_content = b64_content
+            state.uploaded_file_name = e.file.name
             
     except Exception as error:
-        state.error_message = f"Erro ao fazer upload do arquivo: {str(error)}"
+        state.error_message = f"❌ Erro ao carregar o arquivo: {str(error)}\n\nPor favor, tente novamente ou escolha outro arquivo."
 
 def handle_send_message(e: me.ClickEvent):
     """Lidar com envio de mensagem"""
