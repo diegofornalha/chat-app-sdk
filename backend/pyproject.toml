@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "aiofiles>=24.1.0",
     "anthropic>=0.62.0",
+    "claude-code-sdk>=0.0.20",
     "mesop>=1.1.0",
     "python-socketio>=5.13.0",
 ]
