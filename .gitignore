@@ -60,3 +60,5 @@ CLAUDE.md
 .roo/*
 memory/*
 .roomodes*
+mcp-rag-cache/*
+mcp-rag-server/*
