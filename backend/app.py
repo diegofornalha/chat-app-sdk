@@ -17,6 +17,7 @@ import base64
 
 # Claude Code SDK
 from claude_code_sdk import query, ClaudeCodeOptions
+from dataclasses import is_dataclass
 
 # Inicializar cliente Anthropic (para uso direto da API se necessário)
 anthropic_client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
@@ -51,10 +52,78 @@ class ProcessingStep:
     data: Dict[str, Any] = field(default_factory=dict)
     timestamp: datetime = field(default_factory=datetime.now)
 
+# Funções auxiliares para conversão e validação
+def dict_to_chat_session(session_dict: dict) -> ChatSession:
+    """Converte um dicionário para objeto ChatSession de forma segura"""
+    if isinstance(session_dict, ChatSession):
+        return session_dict
+    
+    # Criar nova sessão
+    session = ChatSession()
+    
+    # Copiar campos básicos
+    if isinstance(session_dict, dict):
+        session.id = session_dict.get('id', session.id)
+        session.title = session_dict.get('title', 'Nova Conversa')
+        session.context = session_dict.get('context', '')
+        session.claude_session_id = session_dict.get('claude_session_id')
+        
+        # Converter mensagens
+        messages_data = session_dict.get('messages', [])
+        session.messages = []
+        for msg in messages_data:
+            if isinstance(msg, Message):
+                session.messages.append(msg)
+            elif isinstance(msg, dict):
+                # Converter dict para Message
+                new_msg = Message(
+                    id=msg.get('id', str(uuid.uuid4())),
+                    role=msg.get('role', 'user'),
+                    content=msg.get('content', ''),
+                    metadata=msg.get('metadata', {}),
+                    is_streaming=msg.get('is_streaming', False),
+                    in_progress=msg.get('in_progress', False)
+                )
+                # Converter timestamp se existir
+                if 'timestamp' in msg:
+                    if isinstance(msg['timestamp'], str):
+                        try:
+                            new_msg.timestamp = datetime.fromisoformat(msg['timestamp'])
+                        except:
+                            new_msg.timestamp = datetime.now()
+                    elif isinstance(msg['timestamp'], datetime):
+                        new_msg.timestamp = msg['timestamp']
+                    else:
+                        new_msg.timestamp = datetime.now()
+                session.messages.append(new_msg)
+        
+        # Converter timestamps
+        if 'created_at' in session_dict:
+            if isinstance(session_dict['created_at'], str):
+                try:
+                    session.created_at = datetime.fromisoformat(session_dict['created_at'])
+                except:
+                    session.created_at = datetime.now()
+            elif isinstance(session_dict['created_at'], datetime):
+                session.created_at = session_dict['created_at']
+        
+        if 'last_activity' in session_dict:
+            if isinstance(session_dict['last_activity'], str):
+                try:
+                    session.last_activity = datetime.fromisoformat(session_dict['last_activity'])
+                except:
+                    session.last_activity = datetime.now()
+            elif isinstance(session_dict['last_activity'], datetime):
+                session.last_activity = session_dict['last_activity']
+    
+    return session
+
 @me.stateclass
 class State:
     """Estado da aplicação"""
+    # IMPORTANTE: current_session deve sempre ser um objeto ChatSession, nunca dict
     current_session: ChatSession = field(default_factory=ChatSession)
+    # sessions armazena objetos ChatSession, não dicts
     sessions: Dict[str, ChatSession] = field(default_factory=dict)
     input_text: str = ""
     is_loading: bool = False
@@ -66,6 +135,45 @@ class State:
     processing_steps: List[ProcessingStep] = field(default_factory=list)
     current_response: str = ""
     stream_content: str = ""
+    
+    def validate_sessions(self):
+        """Valida e corrige sessões para garantir que são objetos ChatSession"""
+        from dataclasses import is_dataclass
+        
+        # Validar current_session
+        if not isinstance(self.current_session, ChatSession):
+            if isinstance(self.current_session, dict):
+                # Converter dict para ChatSession
+                self.current_session = dict_to_chat_session(self.current_session)
+            else:
+                # Criar nova sessão se inválida
+                self.current_session = ChatSession()
+        
+        # Validar todas as sessões no dicionário
+        for session_id in list(self.sessions.keys()):
+            session = self.sessions[session_id]
+            if not isinstance(session, ChatSession):
+                if isinstance(session, dict):
+                    # Converter dict para ChatSession
+                    self.sessions[session_id] = dict_to_chat_session(session)
+                else:
+                    # Remover sessão inválida
+                    del self.sessions[session_id]
+
+def validate_state_before_render(state: State):
+    """Valida estado antes de renderizar para evitar erros de serialização"""
+    # Sempre validar sessões antes de renderizar
+    state.validate_sessions()
+    
+    # Garantir que current_session existe
+    if not state.current_session:
+        state.current_session = ChatSession()
+    
+    # Se não há sessões, criar uma inicial
+    if not state.sessions:
+        initial_session = ChatSession()
+        state.sessions[initial_session.id] = initial_session
+        state.current_session = initial_session
 
 async def call_claude_code_sdk(prompt: str, session_id: Optional[str] = None) -> tuple[str, Dict[str, Any]]:
     """
@@ -239,12 +347,15 @@ def call_anthropic_api(prompt: str, messages: List[Message]) -> tuple[str, Dict[
 def main_page():
     state = me.state(State)
     
+    # IMPORTANTE: Validar estado antes de renderizar para evitar erros de serialização
+    validate_state_before_render(state)
+    
     with me.box(
         style=me.Style(
             display="flex",
             height="100vh",
             width="100%",
-            background="linear-gradient(135deg, #0f0f0f 0%, #1a1a1a 100%)",
+            background="#ffffff",
             font_family="'Inter', sans-serif"
         )
     ):
@@ -280,7 +391,13 @@ def main_page():
                     render_processing_steps(state)
                 
                 # Mensagens do chat
-                for message in state.current_session.messages:
+                messages = []
+                if hasattr(state.current_session, 'messages'):
+                    messages = state.current_session.messages
+                elif isinstance(state.current_session, dict):
+                    messages = state.current_session.get('messages', [])
+                
+                for message in messages:
                     render_message(message)
                 
                 # Indicador de carregamento
@@ -296,11 +413,19 @@ def main_page():
 
 def render_sidebar(state: State):
     """Renderiza a sidebar com sessões"""
+    
+    # Debug: verificar tipos no estado
+    import sys
+    for session_id, session in state.sessions.items():
+        if not isinstance(session, ChatSession):
+            print(f"WARNING: Session {session_id} is {type(session)}, not ChatSession!", file=sys.stderr)
+            # Converter automaticamente
+            state.sessions[session_id] = dict_to_chat_session(session if isinstance(session, dict) else {})
     with me.box( 
         style=me.Style( 
             width=280, 
-            background="rgba(30, 30, 30, 0.95)", 
-            border=me.Border(right=me.BorderSide(width=1, color="rgba(255, 255, 255, 0.1)")), 
+            background="#fafafa", 
+            border=me.Border(right=me.BorderSide(width=1, color="#e0e0e0")), 
             padding=me.Padding.all(20),
             display="flex",
             flex_direction="column",
@@ -311,7 +436,7 @@ def render_sidebar(state: State):
         with me.box(
             style=me.Style(
                 padding=me.Padding.all(12),
-                background="linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)",
+                background="#1976d2",
                 border_radius=8,
                 cursor="pointer",
                 text_align="center"
@@ -330,7 +455,7 @@ def render_sidebar(state: State):
         me.text(
             "CONVERSAS RECENTES",
             style=me.Style(
-                color="rgba(255, 255, 255, 0.6)",
+                color="#757575",
                 font_size=12,
                 letter_spacing="0.05em"
             )
@@ -347,12 +472,19 @@ def render_sidebar(state: State):
         ):
             if state.sessions:
                 for session_id, session in state.sessions.items():
-                    render_session_item(session, session_id == state.current_session.id, session_id)
+                    # Obter ID da sessão atual de forma segura
+                    current_session_id = None
+                    if hasattr(state.current_session, 'id'):
+                        current_session_id = state.current_session.id
+                    elif isinstance(state.current_session, dict):
+                        current_session_id = state.current_session.get('id')
+                    
+                    render_session_item(session, session_id == current_session_id, session_id)
             else:
                 me.text(
                     "Nenhuma conversa ainda",
                     style=me.Style(
-                        color="rgba(255, 255, 255, 0.4)",
+                        color="#9e9e9e",
                         font_size=13,
                         text_align="center",
                         margin=me.Margin(top=20)
@@ -390,24 +522,24 @@ def render_session_item(session, is_active: bool, session_id: str):
         key=session_id,
         style=me.Style(
             padding=me.Padding.all(12),
-            background="rgba(255, 255, 255, 0.05)" if is_active else "transparent",
+            background="#e3f2fd" if is_active else "transparent",
             border_radius=6,
             cursor="pointer",
-            border=me.Border.all(me.BorderSide(width=1, color="rgba(255, 255, 255, 0.1)")) if is_active else None
+            border=me.Border.all(me.BorderSide(width=1, color="#1976d2")) if is_active else None
         ),
         on_click=lambda e: load_session(e, session_id)
     ):
         me.text(
             title[:30] + "..." if len(title) > 30 else title,
             style=me.Style(
-                color="white" if is_active else "rgba(255, 255, 255, 0.7)",
+                color="#1976d2" if is_active else "#424242",
                 font_size=14
             )
         )
         me.text(
             f"{messages_count} mensagens • {last_activity}",
             style=me.Style(
-                color="rgba(255, 255, 255, 0.4)",
+                color="#9e9e9e",
                 font_size=12
             )
         )
@@ -417,7 +549,7 @@ def render_header(state: State):
     with me.box(
         style=me.Style(
             padding=me.Padding.all(20),
-            border=me.Border(bottom=me.BorderSide(width=1, color="rgba(255, 255, 255, 0.1)")),
+            border=me.Border(bottom=me.BorderSide(width=1, color="#e0e0e0")),
             display="flex",
             align_items="center",
             gap=20
@@ -434,7 +566,7 @@ def render_header(state: State):
             me.icon(
                 "menu" if not state.show_sidebar else "menu_open",
                 style=me.Style(
-                    color="white",
+                    color="#424242",
                     font_size=24
                 )
             )
@@ -443,7 +575,7 @@ def render_header(state: State):
         me.text(
             "Chat com Claude Code",
             style=me.Style(
-                color="white",
+                color="#212121",
                 font_size=20,
                 font_weight=600,
                 flex=1
@@ -461,7 +593,7 @@ def render_header(state: State):
             me.text(
                 "Modo:",
                 style=me.Style(
-                    color="rgba(255, 255, 255, 0.6)",
+                    color="#757575",
                     font_size=14
                 )
             )
@@ -470,8 +602,8 @@ def render_header(state: State):
             with me.box(
                 style=me.Style(
                     padding=me.Padding(left=12, right=12, top=6, bottom=6),
-                    background="rgba(79, 70, 229, 0.2)",
-                    border=me.Border.all(me.BorderSide(width=1, color="rgba(79, 70, 229, 0.5)")),
+                    background="#e3f2fd",
+                    border=me.Border.all(me.BorderSide(width=1, color="#1976d2")),
                     border_radius=20,
                     cursor="pointer"
                 ),
@@ -480,7 +612,7 @@ def render_header(state: State):
                 me.text(
                     mode_text,
                     style=me.Style(
-                        color="#a78bfa",
+                        color="#1976d2",
                         font_size=13,
                         font_weight=500
                     )
@@ -504,8 +636,8 @@ def render_message(message: Message):
                     width=36,
                     height=36,
                     border_radius="50%",
-                    background="linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)" if is_user 
-                              else "linear-gradient(135deg, #f97316 0%, #f59e0b 100%)",
+                    background="#1976d2" if is_user 
+                              else "#757575",
                     display="flex",
                     align_items="center",
                     justify_content="center"
@@ -539,7 +671,7 @@ def render_message(message: Message):
                 me.text(
                     "Você" if is_user else "Claude",
                     style=me.Style(
-                        color="white",
+                        color="#212121",
                         font_weight=600,
                         font_size=14
                     )
@@ -547,7 +679,7 @@ def render_message(message: Message):
                 me.text(
                     message.timestamp.strftime("%H:%M"),
                     style=me.Style(
-                        color="rgba(255, 255, 255, 0.4)",
+                        color="#9e9e9e",
                         font_size=12
                     )
                 )
@@ -563,16 +695,16 @@ def render_message(message: Message):
             with me.box(
                 style=me.Style(
                     padding=me.Padding.all(12),
-                    background="rgba(255, 255, 255, 0.05)",
+                    background="#f5f5f5",
                     border_radius=8,
-                    border=me.Border.all(me.BorderSide(width=1, color="rgba(255, 255, 255, 0.1)"))
+                    border=me.Border.all(me.BorderSide(width=1, color="#e0e0e0"))
                 )
             ):
                 if message.content:
                     me.markdown(
                         message.content,
                         style=me.Style(
-                            color="rgba(255, 255, 255, 0.9)",
+                            color="#212121",
                             font_size=14,
                             line_height="1.6"
                         )
@@ -581,7 +713,7 @@ def render_message(message: Message):
                     me.text(
                         "Digitando...",
                         style=me.Style(
-                            color="rgba(255, 255, 255, 0.5)",
+                            color="#757575",
                             font_size=14,
                             font_style="italic"
                         )
@@ -606,7 +738,7 @@ def render_message_metadata(metadata: Dict[str, Any]):
             me.text(
                 f"📥 {metadata['input_tokens']} tokens",
                 style=me.Style(
-                    color="rgba(255, 255, 255, 0.5)",
+                    color="#757575",
                     font_size=12
                 )
             )
@@ -615,7 +747,7 @@ def render_message_metadata(metadata: Dict[str, Any]):
             me.text(
                 f"📤 {metadata['output_tokens']} tokens",
                 style=me.Style(
-                    color="rgba(255, 255, 255, 0.5)",
+                    color="#757575",
                     font_size=12
                 )
             )
@@ -625,7 +757,7 @@ def render_message_metadata(metadata: Dict[str, Any]):
             me.text(
                 f"💰 ${metadata['cost_usd']:.4f}",
                 style=me.Style(
-                    color="rgba(255, 255, 255, 0.5)",
+                    color="#757575",
                     font_size=12
                 )
             )
@@ -635,7 +767,7 @@ def render_message_metadata(metadata: Dict[str, Any]):
             me.text(
                 f"⏱️ {duration_seconds:.1f}s",
                 style=me.Style(
-                    color="rgba(255, 255, 255, 0.5)",
+                    color="#757575",
                     font_size=12
                 )
             )
@@ -644,7 +776,7 @@ def render_message_metadata(metadata: Dict[str, Any]):
             me.text(
                 f"🔄 {metadata['num_turns']} turno{'s' if metadata['num_turns'] > 1 else ''}",
                 style=me.Style(
-                    color="rgba(255, 255, 255, 0.5)",
+                    color="#757575",
                     font_size=12
                 )
             )
@@ -656,7 +788,7 @@ def render_message_metadata(metadata: Dict[str, Any]):
             me.text(
                 f"🔧 {tools}",
                 style=me.Style(
-                    color="rgba(255, 255, 255, 0.5)",
+                    color="#757575",
                     font_size=12
                 )
             )
@@ -666,8 +798,8 @@ def render_processing_steps(state: State):
     with me.box(
         style=me.Style(
             padding=me.Padding.all(12),
-            background="rgba(79, 70, 229, 0.1)",
-            border=me.Border.all(me.BorderSide(width=1, color="rgba(79, 70, 229, 0.3)")),
+            background="#e3f2fd",
+            border=me.Border.all(me.BorderSide(width=1, color="#1976d2")),
             border_radius=8,
             margin=me.Margin(bottom=20)
         )
@@ -675,7 +807,7 @@ def render_processing_steps(state: State):
         me.text(
             "Processando...",
             style=me.Style(
-                color="rgba(167, 139, 250, 1)",
+                color="#1976d2",
                 font_weight=600,
                 font_size=14,
                 margin=me.Margin(bottom=10)
@@ -694,14 +826,14 @@ def render_processing_steps(state: State):
                 me.text(
                     "→",
                     style=me.Style(
-                        color="rgba(167, 139, 250, 0.6)",
+                        color="#42a5f5",
                         font_size=12
                     )
                 )
                 me.text(
                     step.message,
                     style=me.Style(
-                        color="rgba(255, 255, 255, 0.7)",
+                        color="#424242",
                         font_size=13
                     )
                 )
@@ -722,7 +854,7 @@ def render_loading_indicator():
         me.text(
             "Claude está pensando...",
             style=me.Style(
-                color="rgba(255, 255, 255, 0.6)",
+                color="#757575",
                 font_size=14
             )
         )
@@ -732,15 +864,15 @@ def render_error(error_message: str):
     with me.box(
         style=me.Style(
             padding=me.Padding.all(12),
-            background="rgba(239, 68, 68, 0.1)",
-            border=me.Border.all(me.BorderSide(width=1, color="rgba(239, 68, 68, 0.3)")),
+            background="#ffebee",
+            border=me.Border.all(me.BorderSide(width=1, color="#f44336")),
             border_radius=8
         )
     ):
         me.text(
             f"❌ {error_message}",
             style=me.Style(
-                color="#f87171",
+                color="#d32f2f",
                 font_size=14
             )
         )
@@ -750,7 +882,7 @@ def render_input_area(state: State):
     with me.box(
         style=me.Style(
             padding=me.Padding.all(20),
-            border=me.Border(top=me.BorderSide(width=1, color="rgba(255, 255, 255, 0.1)")),
+            border=me.Border(top=me.BorderSide(width=1, color="#e0e0e0")),
             display="flex",
             gap=12,
             align_items="flex-end"
@@ -770,7 +902,7 @@ def render_input_area(state: State):
                 color="primary",
                 style=me.Style(
                     background="transparent",
-                    color="rgba(255, 255, 255, 0.6)"
+                    color="#757575"
                 )
             )
         
@@ -785,11 +917,11 @@ def render_input_area(state: State):
                 max_rows=5,
                 style=me.Style(
                     width="100%",
-                    background="rgba(255, 255, 255, 0.05)",
-                    border=me.Border.all(me.BorderSide(width=1, color="rgba(255, 255, 255, 0.2)")),
+                    background="#ffffff",
+                    border=me.Border.all(me.BorderSide(width=1, color="#bdbdbd")),
                     border_radius=8,
                     padding=me.Padding.all(12),
-                    color="white",
+                    color="#424242",
                     font_size=14
                 )
             )
@@ -806,7 +938,7 @@ def render_input_area(state: State):
             me.icon(
                 "send",
                 style=me.Style(
-                    color="white" if not state.is_loading else "rgba(255, 255, 255, 0.5)"
+                    color="#424242" if not state.is_loading else "#bdbdbd"
                 )
             )
 
@@ -824,9 +956,24 @@ def toggle_mode(e: me.ClickEvent):
 def handle_new_chat(e: me.ClickEvent):
     """Criar nova sessão de chat"""
     state = me.state(State)
+    
+    # Validar sessões existentes primeiro
+    state.validate_sessions()
+    
+    # Criar nova sessão como objeto ChatSession apropriado
     new_session = ChatSession()
+    new_session.messages = []  # Garantir lista vazia
+    
+    # Garantir que é um objeto, não dict
+    assert isinstance(new_session, ChatSession), "new_session deve ser ChatSession"
+    
+    # Salvar no dicionário como objeto ChatSession
     state.sessions[new_session.id] = new_session
+    
+    # Definir como sessão atual (sempre objeto)
     state.current_session = new_session
+    
+    # Limpar outros estados
     state.processing_steps = []
     state.error_message = ""
     state.input_text = ""
@@ -834,8 +981,74 @@ def handle_new_chat(e: me.ClickEvent):
 def load_session(e: me.ClickEvent, session_id: str):
     """Carregar uma sessão existente"""
     state = me.state(State)
+    
+    # Validar todas as sessões primeiro
+    state.validate_sessions()
+    
     if session_id in state.sessions:
-        state.current_session = state.sessions[session_id]
+        session = state.sessions[session_id]
+        # Garantir que a sessão seja um objeto ChatSession, não um dict
+        if isinstance(session, dict):
+            # Converter dict para ChatSession
+            new_session = ChatSession()
+            new_session.id = session.get('id', new_session.id)
+            new_session.title = session.get('title', 'Nova Conversa')
+            
+            # Converter mensagens de dict para objetos Message se necessário
+            messages_list = session.get('messages', [])
+            converted_messages = []
+            for msg in messages_list:
+                if isinstance(msg, dict):
+                    # Converter dict para Message
+                    new_msg = Message(
+                        id=msg.get('id', str(uuid.uuid4())),
+                        role=msg.get('role', 'user'),
+                        content=msg.get('content', ''),
+                        metadata=msg.get('metadata', {}),
+                        is_streaming=msg.get('is_streaming', False),
+                        in_progress=msg.get('in_progress', False)
+                    )
+                    # Converter timestamp se existir
+                    if 'timestamp' in msg:
+                        if isinstance(msg['timestamp'], str):
+                            try:
+                                new_msg.timestamp = datetime.fromisoformat(msg['timestamp'])
+                            except:
+                                new_msg.timestamp = datetime.now()
+                        else:
+                            new_msg.timestamp = msg['timestamp']
+                    converted_messages.append(new_msg)
+                elif isinstance(msg, Message):
+                    converted_messages.append(msg)
+            
+            new_session.messages = converted_messages
+            new_session.context = session.get('context', '')
+            new_session.claude_session_id = session.get('claude_session_id')
+            
+            # Converter timestamps se necessário
+            if 'created_at' in session:
+                if isinstance(session['created_at'], str):
+                    try:
+                        new_session.created_at = datetime.fromisoformat(session['created_at'])
+                    except:
+                        new_session.created_at = datetime.now()
+                else:
+                    new_session.created_at = session['created_at']
+            
+            if 'last_activity' in session:
+                if isinstance(session['last_activity'], str):
+                    try:
+                        new_session.last_activity = datetime.fromisoformat(session['last_activity'])
+                    except:
+                        new_session.last_activity = datetime.now()
+                else:
+                    new_session.last_activity = session['last_activity']
+            
+            state.current_session = new_session
+            # Atualizar também no dicionário de sessões com o objeto convertido
+            state.sessions[session_id] = new_session
+        else:
+            state.current_session = session
         state.error_message = ""
         state.processing_steps = []
 
@@ -872,6 +1085,9 @@ def handle_send_message(e: me.ClickEvent):
     """Lidar com envio de mensagem"""
     state = me.state(State)
     
+    # Validar estado antes de processar mensagem
+    state.validate_sessions()
+    
     if not state.input_text.strip() or state.is_loading:
         return
     
@@ -883,6 +1099,15 @@ def handle_send_message(e: me.ClickEvent):
         role="user",
         content=state.input_text
     )
+    # Garantir que current_session seja sempre um objeto ChatSession
+    if not isinstance(state.current_session, ChatSession):
+        # Se não for ChatSession, criar uma nova
+        new_session = ChatSession()
+        new_session.messages = []
+        state.current_session = new_session
+        state.sessions[new_session.id] = new_session
+    
+    # Adicionar mensagem (agora sabemos que é ChatSession)
     state.current_session.messages.append(user_message)
     
     # Guardar prompt e limpar input
@@ -899,6 +1124,7 @@ def handle_send_message(e: me.ClickEvent):
         content="",
         in_progress=True
     )
+    # Adicionar mensagem do assistente (sabemos que current_session é ChatSession)
     state.current_session.messages.append(assistant_message)
     
     # Processar mensagem de forma assíncrona
@@ -929,14 +1155,22 @@ def process_message_async(state: State, prompt: str, assistant_message: Message)
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
-            session_id = state.current_session.claude_session_id
+            # Obter session_id de forma segura
+            session_id = None
+            if hasattr(state.current_session, 'claude_session_id'):
+                session_id = state.current_session.claude_session_id
+            elif isinstance(state.current_session, dict):
+                session_id = state.current_session.get('claude_session_id')
             response_text, metadata = loop.run_until_complete(
                 call_claude_code_sdk(prompt, session_id)
             )
             
-            # Atualizar session_id se fornecido
+            # Atualizar session_id se fornecido de forma segura
             if metadata.get("session_id"):
-                state.current_session.claude_session_id = metadata["session_id"]
+                if hasattr(state.current_session, 'claude_session_id'):
+                    state.current_session.claude_session_id = metadata["session_id"]
+                elif isinstance(state.current_session, dict):
+                    state.current_session['claude_session_id'] = metadata["session_id"]
                 
         else:
             # Usar API Anthropic
@@ -947,9 +1181,16 @@ def process_message_async(state: State, prompt: str, assistant_message: Message)
                 )
             )
             
+            # Obter mensagens de forma segura
+            messages_list = []
+            if hasattr(state.current_session, 'messages'):
+                messages_list = state.current_session.messages[:-2]
+            elif isinstance(state.current_session, dict):
+                messages_list = state.current_session.get('messages', [])[:-2]
+            
             response_text, metadata = call_anthropic_api(
                 prompt, 
-                state.current_session.messages[:-2]  # Excluir última mensagem vazia
+                messages_list  # Excluir última mensagem vazia
             )
         
         # Atualizar mensagem do assistente
@@ -957,19 +1198,39 @@ def process_message_async(state: State, prompt: str, assistant_message: Message)
         assistant_message.metadata = metadata
         assistant_message.in_progress = False
         
-        # Atualizar sessão
-        state.current_session.last_activity = datetime.now()
-        if state.current_session.title == "Nova Conversa" and len(prompt) > 0:
-            state.current_session.title = prompt[:50] + "..." if len(prompt) > 50 else prompt
+        # Atualizar sessão de forma segura
+        if hasattr(state.current_session, 'last_activity'):
+            state.current_session.last_activity = datetime.now()
+        elif isinstance(state.current_session, dict):
+            state.current_session['last_activity'] = datetime.now()
         
-        # Salvar sessão
+        # Atualizar título
+        current_title = ""
+        if hasattr(state.current_session, 'title'):
+            current_title = state.current_session.title
+        elif isinstance(state.current_session, dict):
+            current_title = state.current_session.get('title', '')
+        
+        if current_title == "Nova Conversa" and len(prompt) > 0:
+            new_title = prompt[:50] + "..." if len(prompt) > 50 else prompt
+            if hasattr(state.current_session, 'title'):
+                state.current_session.title = new_title
+            elif isinstance(state.current_session, dict):
+                state.current_session['title'] = new_title
+        
+        # Salvar sessão (current_session sempre é ChatSession)
         state.sessions[state.current_session.id] = state.current_session
         
     except Exception as error:
         state.error_message = f"Erro: {str(error)}"
         # Remover mensagem vazia do assistente em caso de erro
-        if state.current_session.messages and state.current_session.messages[-1].in_progress:
-            state.current_session.messages.pop()
+        if hasattr(state.current_session, 'messages'):
+            if state.current_session.messages and state.current_session.messages[-1].in_progress:
+                state.current_session.messages.pop()
+        elif isinstance(state.current_session, dict):
+            messages = state.current_session.get('messages', [])
+            if messages and messages[-1].in_progress:
+                messages.pop()
     finally:
         state.is_loading = False
         state.processing_steps = []
