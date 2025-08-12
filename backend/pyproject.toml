@@ -1,0 +1,12 @@
+[project]
+name = "chat-backend"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aiofiles>=24.1.0",
+    "anthropic>=0.62.0",
+    "mesop>=1.1.0",
+    "python-socketio>=5.13.0",
+]
