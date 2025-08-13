@@ -20,20 +20,47 @@ client = Anthropic(api_key=API_KEY)
 # Arquivo para salvar histórico
 HISTORY_FILE = "chat_history.json"
 
+def load_history():
+    """Carrega histórico salvo"""
+    if os.path.exists(HISTORY_FILE):
+        try:
+            with open(HISTORY_FILE, 'r') as f:
+                return json.load(f)
+        except:
+            return []
+    return []
+
+def save_history(messages):
+    """Salva histórico"""
+    with open(HISTORY_FILE, 'w') as f:
+        json.dump(messages, f, indent=2, ensure_ascii=False)
+
 def chat():
     """Loop principal do chat"""
     print("🤖 Chat com Claude - Digite 'sair' para encerrar")
+    print("   Digite 'limpar' para limpar histórico")
     print("-" * 50)
     
-    messages = []
+    messages = load_history()
+    if messages:
+        print(f"📚 {len(messages)//2} mensagens no histórico")
     
     while True:
         # Input do usuário
         user_input = input("\n👤 Você: ").strip()
         
         if user_input.lower() == 'sair':
+            save_history(messages)
+            print("💾 Histórico salvo!")
             print("👋 Até logo!")
             break
+        
+        if user_input.lower() == 'limpar':
+            messages = []
+            if os.path.exists(HISTORY_FILE):
+                os.remove(HISTORY_FILE)
+            print("🧹 Histórico limpo!")
+            continue
         
         if not user_input:
             continue
@@ -43,6 +70,7 @@ def chat():
         
         try:
             # Chama Claude
+            print("⏳ Pensando...")
             response = client.messages.create(
                 model="claude-3-5-sonnet-20241022",
                 max_tokens=4096,
