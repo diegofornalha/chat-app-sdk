@@ -1,9 +1,0 @@
-[project]
-name = "chat-backend"
-version = "1.0.0"
-description = "Chat simples com Claude"
-readme = "README.md"
-requires-python = ">=3.8"
-dependencies = [
-    "anthropic>=0.62.0",
-]
