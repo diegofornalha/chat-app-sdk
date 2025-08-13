@@ -1,31 +1,32 @@
-# Chat App Minimalista
+# Chat App - Versão Ultra Simples
 
-## 🎯 100% Funcional - Apenas o Essencial
+## 🚀 Setup em 3 passos
 
-### Instalação (1 comando):
+### 1. Instalar dependência:
 ```bash
 pip install anthropic
 ```
 
-### Configuração (1 variável):
+### 2. Configurar API key:
 ```bash
 export ANTHROPIC_API_KEY="sua-chave-aqui"
 ```
 
-### Executar (1 comando):
+### 3. Executar:
 ```bash
 python chat_app.py
 ```
 
-## ✨ Features:
-- Chat com Claude
-- Histórico de conversa
-- Tratamento de erros
-- Interface simples CLI
+## ✨ O que faz:
+- ✅ Chat com Claude
+- ✅ Salva histórico em JSON
+- ✅ Comando 'limpar' para resetar
+- ✅ Comando 'sair' para encerrar
 
-## 📝 Código:
-- **1 arquivo**: `chat_app.py`
-- **50 linhas** de código
-- **1 dependência**: anthropic
+## 📁 Arquivos (apenas 3):
+- `chat_app.py` - Aplicação completa (96 linhas)
+- `requirements.txt` - Dependência (1 linha)
+- `README.md` - Este arquivo
 
-Pronto! 🚀
+## 💡 Simples assim!
+Zero complexidade, 100% funcional.
