@@ -1,0 +1,92 @@
+{
+  "name": "mesop-chat-agent",
+  "version": "1.0.0",
+  "description": "Claude Code SDK Chat Interface with A2A Protocol - Advanced AI Chat with Code Generation",
+  "author": {
+    "name": "Mesop-Chat Team",
+    "contact": "support@mesop-chat.ai"
+  },
+  "capabilities": [
+    "chat",
+    "code-generation",
+    "file-handling",
+    "session-persistence",
+    "multi-turn-conversation",
+    "streaming-responses",
+    "context-management",
+    "error-recovery"
+  ],
+  "endpoint": "http://localhost:32123",
+  "protocols": [
+    "a2a/1.0",
+    "claude-code-sdk/0.0.20",
+    "http/1.1",
+    "websocket"
+  ],
+  "authentication": {
+    "type": "cli-based",
+    "description": "Uses Claude CLI authentication (claude auth login)",
+    "required": false
+  },
+  "endpoints": {
+    "chat": "/",
+    "health": "/health",
+    "api_info": "/api/info",
+    "agent_discovery": "/.well-known/agent.json"
+  },
+  "features": {
+    "claude_code_sdk": {
+      "enabled": true,
+      "version": "0.0.20",
+      "max_turns": 3,
+      "models": ["claude-3-5-sonnet-20241022"]
+    },
+    "a2a_protocol": {
+      "enabled": true,
+      "version": "1.0",
+      "discovery": true,
+      "negotiation": true
+    },
+    "ui": {
+      "framework": "mesop",
+      "theme": "light",
+      "responsive": true,
+      "file_upload": true
+    },
+    "performance": {
+      "streaming": true,
+      "caching": true,
+      "session_persistence": true,
+      "max_concurrent_sessions": 100
+    }
+  },
+  "metadata": {
+    "framework": "mesop",
+    "language": "python",
+    "runtime": "python3.12+",
+    "sdk": "claude-code-sdk",
+    "server": "fastapi+uvicorn",
+    "license": "MIT",
+    "repository": "https://github.com/mesop-chat/mesop-chat",
+    "documentation": "https://docs.mesop-chat.ai"
+  },
+  "requirements": {
+    "python": ">=3.12",
+    "dependencies": [
+      "mesop>=1.1.0",
+      "claude-code-sdk>=0.0.20",
+      "fastapi>=0.115.0",
+      "uvicorn>=0.32.0"
+    ]
+  },
+  "tags": [
+    "ai-chat",
+    "claude",
+    "code-generation",
+    "a2a-protocol",
+    "mesop",
+    "python",
+    "assistant",
+    "sdk"
+  ]
+}
