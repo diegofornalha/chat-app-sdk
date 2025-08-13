@@ -4,16 +4,21 @@ Chat App Minimalista - 100% Funcional
 Apenas o essencial para chat com Claude
 """
 import os
+import json
 from anthropic import Anthropic
 
 # Configuração simples
 API_KEY = os.getenv("ANTHROPIC_API_KEY")
 if not API_KEY:
     print("⚠️  Configure ANTHROPIC_API_KEY no ambiente")
+    print("   export ANTHROPIC_API_KEY='sua-chave'")
     exit(1)
 
 # Cliente Claude
 client = Anthropic(api_key=API_KEY)
+
+# Arquivo para salvar histórico
+HISTORY_FILE = "chat_history.json"
 
 def chat():
     """Loop principal do chat"""
